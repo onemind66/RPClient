@@ -48,6 +48,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.input.OutputTransformation
 import androidx.compose.foundation.text.input.TextFieldState
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
@@ -178,6 +181,8 @@ import me.kafuuneko.rpclient.ui.widgets.RpLazyColumn
 import me.kafuuneko.rpclient.ui.widgets.RpScrollableOutlinedTextField
 import me.kafuuneko.rpclient.ui.widgets.RpTagRow
 import me.kafuuneko.rpclient.ui.widgets.StoryUserPersonaCard
+import me.kafuuneko.rpclient.ui.widgets.MarkdownMessageText
+import me.kafuuneko.rpclient.libs.AppModel
 import me.kafuuneko.rpclient.ui.widgets.dragContainer
 import me.kafuuneko.rpclient.ui.widgets.draggableScrollIndicator
 import me.kafuuneko.rpclient.ui.widgets.rememberLazyListDragDropState
@@ -1244,6 +1249,33 @@ private fun StoryTextEditor(
 ) {
     // 正文不使用 rememberSaveable，避免长文进入 Activity Bundle；Room 承担进程恢复。
     val editorScrollState = rememberScrollState()
+    val markdownEnabled = AppModel.storyMarkdownRenderingEnabled
+    var markdownPreview by remember(document.chapterId) {
+        mutableStateOf(markdownEnabled)
+    }
+    val focusRequester = remember(document.chapterId) { FocusRequester() }
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val returnToMarkdownPreview = {
+        // Publish the latest field contents before switching away from raw editing.
+        StoryEditorUiIntent.EditorSnapshotChanged(
+            StoryEditorSnapshot(
+                chapterId = document.chapterId,
+                content = editorState.text.toString(),
+                isComposing = editorState.composition != null
+            )
+        ).emit()
+        markdownPreview = true
+        keyboardController?.hide()
+    }
+    BackHandler(enabled = markdownEnabled && !markdownPreview) {
+        returnToMarkdownPreview()
+    }
+    LaunchedEffect(markdownPreview, markdownEnabled) {
+        if (markdownEnabled && !markdownPreview) {
+            focusRequester.requestFocus()
+            keyboardController?.show()
+        }
+    }
     val followStreamingOutput = generationState is StoryGenerationState.Streaming
     val generatedTextColor = MaterialTheme.colorScheme.primary
     val isStreaming = generationState is StoryGenerationState.Streaming ||
@@ -1333,8 +1365,9 @@ private fun StoryTextEditor(
             state = editorState,
             modifier = Modifier
                 .fillMaxSize()
-                .draggableScrollIndicator(editorScrollState),
-            enabled = editable,
+                .draggableScrollIndicator(editorScrollState)
+                .focusRequester(focusRequester),
+            enabled = editable && (!markdownEnabled || !markdownPreview),
             textStyle = MaterialTheme.typography.bodyLarge.merge(
                 TextStyle(
                     color = MaterialTheme.colorScheme.onSurface,
@@ -1350,14 +1383,66 @@ private fun StoryTextEditor(
                         .fillMaxSize()
                         .padding(horizontal = 20.dp, vertical = 18.dp)
                 ) {
-                    if (editorState.text.isEmpty()) {
-                        Text(
-                            text = stringResource(R.string.story_editor_placeholder),
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.58f)
-                        )
+                    if (markdownEnabled && markdownPreview) {
+                        Column(
+                            modifier = Modifier.fillMaxSize(),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.End
+                            ) {
+                                TextButton(onClick = { markdownPreview = false }) {
+                                    Text(stringResource(R.string.story_markdown_edit))
+                                }
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxWidth()
+                                    .clickable { markdownPreview = false }
+                            ) {
+                                MarkdownMessageText(
+                                    content = editorState.text.toString(),
+                                    isUser = false,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+                        }
+                    } else if (markdownEnabled) {
+                        Column(
+                            modifier = Modifier.fillMaxSize(),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.End
+                            ) {
+                                TextButton(onClick = { returnToMarkdownPreview() }) {
+                                    Text(stringResource(R.string.done))
+                                }
+                            }
+                            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                                if (editorState.text.isEmpty()) {
+                                    Text(
+                                        text = stringResource(R.string.story_editor_placeholder),
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.58f)
+                                    )
+                                }
+                                innerTextField()
+                            }
+                        }
+                    } else {
+                        if (editorState.text.isEmpty()) {
+                            Text(
+                                text = stringResource(R.string.story_editor_placeholder),
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.58f)
+                            )
+                        }
+                        innerTextField()
                     }
-                    innerTextField()
                 }
             }
         )

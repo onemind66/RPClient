@@ -1224,4 +1224,7 @@
     <string name="chat_import_reading_images">Reading images…</string>
     <string name="chat_import_image_directory_failed">Could not read the image folder</string>
     <string name="chat_archive_images_skipped">Completed. Skipped %1$d unavailable images.</string>
+    <string name="story_markdown_rendering">Render Story Markdown</string>
+    <string name="story_markdown_rendering_desc">Show chapter text with Markdown formatting and the active app theme; tap the preview to edit raw text.</string>
+    <string name="story_markdown_edit">Edit raw text</string>
 </resources>
