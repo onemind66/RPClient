@@ -1295,7 +1295,7 @@ private fun StoryTextEditor(
     val markdownPreview = markdownController.preview
     val focusRequester = remember(document.chapterId) { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
-    val returnToMarkdownPreview = {
+    val returnToMarkdownPreview: () -> Unit = {
         // Publish the latest field contents before switching away from raw editing.
         StoryEditorUiIntent.EditorSnapshotChanged(
             StoryEditorSnapshot(
