@@ -104,14 +104,17 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.adaptive.currentWindowAdaptiveInfo
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.SolidColor
@@ -254,9 +257,14 @@ private fun StoryEditorPage(
         }
     }
 
+    // Keep Markdown preview/edit state above adaptive layout branches so the toolbar can control it.
+    val markdownController = remember(document?.chapterId) {
+        StoryMarkdownEditorController(AppModel.storyMarkdownRenderingEnabled)
+    }
     // 窗口等级不随 IME 开合变化，避免输入时切换布局并打断焦点。
     val layoutMode = storyEditorLayoutMode(currentWindowAdaptiveInfo().windowSizeClass)
-    StoryEditorScaffold(
+    CompositionLocalProvider(LocalStoryMarkdownEditorController provides markdownController) {
+        StoryEditorScaffold(
         state = state,
         document = document,
         editorState = editorState,
@@ -264,7 +272,8 @@ private fun StoryEditorPage(
         layoutMode = layoutMode,
         onContinue = onContinue,
         emit = emit
-    )
+        )
+    }
 }
 
 /** 按窗口约束组织故事编辑器的常规、横屏沉浸或紧凑布局。 */
@@ -1138,6 +1147,38 @@ private enum class StoryEditorLayoutMode {
     CompactNarrow
 }
 
+/** Shared Markdown mode and confirmation action for the editor and its toolbars. */
+private class StoryMarkdownEditorController(initialPreview: Boolean) {
+    var preview by mutableStateOf(initialPreview)
+    var onConfirm: (() -> Unit)? = null
+}
+
+private val LocalStoryMarkdownEditorController = compositionLocalOf {
+    StoryMarkdownEditorController(initialPreview = true)
+}
+
+@Composable
+private fun MarkdownModeToolbarAction() {
+    val controller = LocalStoryMarkdownEditorController.current
+    if (AppModel.storyMarkdownRenderingEnabled) {
+        TextButton(
+            onClick = {
+                if (controller.preview) {
+                    controller.preview = false
+                } else {
+                    controller.onConfirm?.invoke()
+                }
+            }
+        ) {
+            Text(
+                stringResource(
+                    if (controller.preview) R.string.story_markdown_edit else R.string.confirm
+                )
+            )
+        }
+    }
+}
+
 @Composable
 private fun CurrentChapterBar(
     state: StoryEditorStructureState,
@@ -1250,9 +1291,8 @@ private fun StoryTextEditor(
     // 正文不使用 rememberSaveable，避免长文进入 Activity Bundle；Room 承担进程恢复。
     val editorScrollState = rememberScrollState()
     val markdownEnabled = AppModel.storyMarkdownRenderingEnabled
-    var markdownPreview by remember(document.chapterId) {
-        mutableStateOf(markdownEnabled)
-    }
+    val markdownController = LocalStoryMarkdownEditorController.current
+    val markdownPreview = markdownController.preview
     val focusRequester = remember(document.chapterId) { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
     val returnToMarkdownPreview = {
@@ -1264,8 +1304,11 @@ private fun StoryTextEditor(
                 isComposing = editorState.composition != null
             )
         ).emit()
-        markdownPreview = true
+        markdownController.preview = true
         keyboardController?.hide()
+    }
+    SideEffect {
+        markdownController.onConfirm = returnToMarkdownPreview
     }
     BackHandler(enabled = markdownEnabled && !markdownPreview) {
         returnToMarkdownPreview()
@@ -1385,17 +1428,8 @@ private fun StoryTextEditor(
                 ) {
                     if (markdownEnabled && markdownPreview) {
                         Column(
-                            modifier = Modifier.fillMaxSize(),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                            modifier = Modifier.fillMaxSize()
                         ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.End
-                            ) {
-                                TextButton(onClick = { markdownPreview = false }) {
-                                    Text(stringResource(R.string.story_markdown_edit))
-                                }
-                            }
                             Box(
                                 modifier = Modifier
                                     .weight(1f)
@@ -1412,17 +1446,8 @@ private fun StoryTextEditor(
                         }
                     } else if (markdownEnabled) {
                         Column(
-                            modifier = Modifier.fillMaxSize(),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                            modifier = Modifier.fillMaxSize()
                         ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.End
-                            ) {
-                                TextButton(onClick = { returnToMarkdownPreview() }) {
-                                    Text(stringResource(R.string.confirm))
-                                }
-                            }
                             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                                 if (editorState.text.isEmpty()) {
                                     Text(
@@ -1702,6 +1727,7 @@ private fun EditorCompactBottomBar(
                     referenceState = referenceState
                 )
             }
+            MarkdownModeToolbarAction()
             IconButton(
                 onClick = {
                     hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
@@ -1997,6 +2023,7 @@ private fun EditorBottomBar(
                     else -> {
                         val historyEnabled = contentState.editable &&
                                 generationState is StoryGenerationState.Idle
+                        MarkdownModeToolbarAction()
                         IconButton(
                             onClick = {
                                 hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
