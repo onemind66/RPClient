@@ -13,6 +13,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import me.kafuuneko.rpclient.R
 import me.kafuuneko.rpclient.feature.about.AboutActivity
+import me.kafuuneko.rpclient.feature.backuprestore.BackupRestoreActivity
 import me.kafuuneko.rpclient.feature.characterlist.CharacterListActivity
 import me.kafuuneko.rpclient.feature.chat.ChatActivity
 import me.kafuuneko.rpclient.feature.chatcreate.ChatCreateActivity
@@ -919,6 +920,13 @@ class MainViewModel : CoreViewModelWithEvent<MainUiIntent, MainUiState>(
     private fun onOpenRequestLogs() {
         if (!isStateOf<MainUiState.Normal>()) return
         AppViewEvent.StartActivity(RequestLogActivity::class.java).tryEmit()
+    }
+
+    /** Open the standalone manual backup and restore screen. */
+    @UiIntentObserver(MainUiIntent.OpenBackupRestore::class)
+    private fun onOpenBackupRestore() {
+        if (!isStateOf<MainUiState.Normal>()) return
+        AppViewEvent.StartActivity(BackupRestoreActivity::class.java).tryEmit()
     }
 
     /** 打开成功 LLM 请求的 Token 消耗统计页。 */
