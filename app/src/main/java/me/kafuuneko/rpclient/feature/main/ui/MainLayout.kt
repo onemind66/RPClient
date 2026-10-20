@@ -1533,7 +1533,7 @@ private fun AppearancePanel(
             mutableStateOf(AppModel.storyMarkdownRenderingEnabled)
         }
         RpSettingsSwitchTile(
-            icon = Icons.Rounded.Description,
+            icon = Icons.Rounded.Edit,
             iconColor = AccentEmeraldColor,
             iconContainerColor = AccentEmeraldColor.copy(alpha = 0.14f),
             title = stringResource(R.string.story_markdown_rendering),
