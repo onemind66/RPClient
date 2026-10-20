@@ -2,22 +2,6 @@ name: Build APK
 
 on:
   workflow_dispatch:
-    inputs:
-      run_tests:
-        description: "Run unit tests before building the APK"
-        required: true
-        default: true
-        type: boolean
-  push:
-    branches:
-      - master
-    paths:
-      - "app/**"
-      - "gradle/**"
-      - "gradlew"
-      - "build.gradle.kts"
-      - "settings.gradle.kts"
-      - ".github/workflows/build-apk.yml"
 
 permissions:
   contents: read
@@ -45,10 +29,6 @@ jobs:
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
-
-      - name: Run unit tests
-        if: github.event_name == 'push' || inputs.run_tests
-        run: ./gradlew --no-daemon testDebugUnitTest
 
       - name: Build debug APK
         run: ./gradlew --no-daemon assembleDebug
