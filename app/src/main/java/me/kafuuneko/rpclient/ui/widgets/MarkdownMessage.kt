@@ -173,7 +173,12 @@ private fun MarkdownInlineText(
     style: TextStyle,
     modifier: Modifier = Modifier
 ) {
-    val text = remember(content, color, narrationColor, linkColor, strongColor, highlightedText) {
+    val highlightBackground = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
+    val highlightForeground = MaterialTheme.colorScheme.primary
+    val text = remember(
+        content, color, narrationColor, linkColor, strongColor, highlightedText,
+        highlightBackground, highlightForeground
+    ) {
         val rendered = buildAnnotatedString {
             appendMarkdownInline(
                 parts = MarkdownParser.parseInline(content),
@@ -192,8 +197,8 @@ private fun MarkdownInlineText(
                 append(rendered)
                 addStyle(
                     SpanStyle(
-                        background = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f),
-                        color = MaterialTheme.colorScheme.primary,
+                        background = highlightBackground,
+                        color = highlightForeground,
                         fontWeight = FontWeight.Medium
                     ),
                     start = match,
