@@ -1440,7 +1440,10 @@ private fun StoryTextEditor(
                                     content = editorState.text.toString(),
                                     isUser = false,
                                     modifier = Modifier.fillMaxWidth(),
-                                    blockSpacing = 16.dp
+                                    blockSpacing = 16.dp,
+                                    highlightedText = displayedEditedRange
+                                        ?.takeIf { it.end <= editorState.text.length }
+                                        ?.let { editorState.text.toString().substring(it.start, it.end) }
                                 )
                             }
                         }

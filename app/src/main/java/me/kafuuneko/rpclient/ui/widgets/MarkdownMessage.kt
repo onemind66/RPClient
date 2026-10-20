@@ -58,7 +58,8 @@ fun MarkdownMessageText(
     content: String,
     isUser: Boolean,
     modifier: Modifier = Modifier,
-    blockSpacing: androidx.compose.ui.unit.Dp = 10.dp
+    blockSpacing: androidx.compose.ui.unit.Dp = 10.dp,
+    highlightedText: String? = null
 ) {
     val blocks = remember(content) { MarkdownParser.parseBlocks(content) }
     val textColor = if (isUser) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
@@ -98,6 +99,7 @@ fun MarkdownMessageText(
                             narrationColor = narrationColor,
                             linkColor = linkColor,
                             strongColor = strongColor,
+                            highlightedText = highlightedText,
                             style = MaterialTheme.typography.bodyMedium
                         )
 
@@ -107,6 +109,7 @@ fun MarkdownMessageText(
                             narrationColor = narrationColor,
                             linkColor = linkColor,
                             strongColor = strongColor,
+                            highlightedText = highlightedText,
                             style = block.headingStyle()
                         )
 
@@ -123,6 +126,7 @@ fun MarkdownMessageText(
                             narrationColor = narrationColor,
                             linkColor = linkColor,
                             strongColor = strongColor,
+                            highlightedText = highlightedText,
                             backgroundColor = blockColor
                         )
 
@@ -132,6 +136,7 @@ fun MarkdownMessageText(
                             narrationColor = narrationColor,
                             linkColor = linkColor,
                             strongColor = strongColor,
+                            highlightedText = highlightedText,
                             markerColor = subtleColor
                         )
 
@@ -164,11 +169,12 @@ private fun MarkdownInlineText(
     narrationColor: Color,
     linkColor: Color,
     strongColor: Color,
+    highlightedText: String? = null,
     style: TextStyle,
     modifier: Modifier = Modifier
 ) {
-    val text = remember(content, color, narrationColor, linkColor, strongColor) {
-        buildAnnotatedString {
+    val text = remember(content, color, narrationColor, linkColor, strongColor, highlightedText) {
+        val rendered = buildAnnotatedString {
             appendMarkdownInline(
                 parts = MarkdownParser.parseInline(content),
                 textColor = color,
@@ -176,6 +182,26 @@ private fun MarkdownInlineText(
                 linkColor = linkColor,
                 strongColor = strongColor
             )
+        }
+        val needle = highlightedText
+            ?.takeIf { it.isNotBlank() }
+            ?.let(::normalizeGeneratedMarkdownText)
+        val match = needle?.let { rendered.text.indexOf(it) } ?: -1
+        if (match >= 0 && needle != null) {
+            buildAnnotatedString {
+                append(rendered)
+                addStyle(
+                    SpanStyle(
+                        background = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f),
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.Medium
+                    ),
+                    start = match,
+                    end = match + needle.length
+                )
+            }
+        } else {
+            rendered
         }
     }
     Text(
@@ -231,6 +257,7 @@ private fun MarkdownQuoteBlock(
     narrationColor: Color,
     linkColor: Color,
     strongColor: Color,
+    highlightedText: String? = null,
     backgroundColor: Color
 ) {
     Surface(
@@ -257,6 +284,7 @@ private fun MarkdownQuoteBlock(
                 narrationColor = narrationColor,
                 linkColor = linkColor,
                 strongColor = strongColor,
+                highlightedText = highlightedText,
                 style = MaterialTheme.typography.bodyMedium
             )
         }
@@ -270,6 +298,7 @@ private fun MarkdownListBlock(
     narrationColor: Color,
     linkColor: Color,
     strongColor: Color,
+    highlightedText: String? = null,
     markerColor: Color
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
@@ -288,11 +317,27 @@ private fun MarkdownListBlock(
                     narrationColor = narrationColor,
                     linkColor = linkColor,
                     strongColor = strongColor,
+                    highlightedText = highlightedText,
                     style = MaterialTheme.typography.bodyMedium
                 )
             }
         }
     }
+}
+
+/**
+ * Removes common inline Markdown delimiters so generated prose remains highlightable
+ * when the generated range contains simple inline formatting.
+ */
+private fun normalizeGeneratedMarkdownText(source: String): String {
+    return source
+        .replace("**", "")
+        .replace("__", "")
+        .replace("~~", "")
+        .replace("*", "")
+        .replace("_", "")
+        .replace("`", "")
+        .trim()
 }
 
 /** 将纯 Markdown 行内模型映射为带有 Compose 样式的 AnnotatedString。 */
