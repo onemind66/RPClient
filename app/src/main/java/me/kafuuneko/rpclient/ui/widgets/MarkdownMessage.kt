@@ -117,7 +117,8 @@ fun MarkdownMessageText(
                             content = block.content,
                             language = block.language,
                             color = textColor,
-                            backgroundColor = blockColor
+                            backgroundColor = blockColor,
+                            highlightedText = highlightedText
                         )
 
                         is MarkdownBlock.Quote -> MarkdownQuoteBlock(
@@ -188,22 +189,32 @@ private fun MarkdownInlineText(
                 strongColor = strongColor
             )
         }
-        val needle = highlightedText
-            ?.takeIf { it.isNotBlank() }
-            ?.let(::normalizeGeneratedMarkdownText)
-        val match = needle?.let { rendered.text.indexOf(it) } ?: -1
-        if (match >= 0 && needle != null) {
+        val needles = highlightedText?.let(::normalizeGeneratedMarkdownSegments).orEmpty()
+        val matches = buildList {
+            needles.forEach { needle ->
+                var searchFrom = 0
+                while (needle.isNotBlank() && searchFrom < rendered.length) {
+                    val match = rendered.text.indexOf(needle, searchFrom)
+                    if (match < 0) break
+                    add(match until (match + needle.length))
+                    searchFrom = match + needle.length
+                }
+            }
+        }.distinct()
+        if (matches.isNotEmpty()) {
             buildAnnotatedString {
                 append(rendered)
-                addStyle(
-                    SpanStyle(
-                        background = highlightBackground,
-                        color = highlightForeground,
-                        fontWeight = FontWeight.Medium
-                    ),
-                    start = match,
-                    end = match + needle.length
-                )
+                matches.forEach { match ->
+                    addStyle(
+                        SpanStyle(
+                            background = highlightBackground,
+                            color = highlightForeground,
+                            fontWeight = FontWeight.Medium
+                        ),
+                        start = match.first,
+                        end = match.last + 1
+                    )
+                }
             }
         } else {
             rendered
@@ -222,8 +233,43 @@ private fun MarkdownCodeBlock(
     content: String,
     language: String?,
     color: Color,
-    backgroundColor: Color
+    backgroundColor: Color,
+    highlightedText: String? = null
 ) {
+    val highlightBackground = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
+    val highlightForeground = MaterialTheme.colorScheme.primary
+    val highlightedCode = remember(content, highlightedText, highlightBackground, highlightForeground) {
+        val needles = highlightedText?.let(::normalizeGeneratedMarkdownSegments).orEmpty()
+        val matches = buildList {
+            needles.forEach { needle ->
+                var searchFrom = 0
+                while (needle.isNotBlank() && searchFrom < content.length) {
+                    val match = content.indexOf(needle, searchFrom)
+                    if (match < 0) break
+                    add(match until (match + needle.length))
+                    searchFrom = match + needle.length
+                }
+            }
+        }.distinct()
+        if (matches.isEmpty()) {
+            AnnotatedString(content.ifBlank { " " })
+        } else {
+            buildAnnotatedString {
+                append(content.ifBlank { " " })
+                matches.filter { it.first < content.length && it.last < content.length }.forEach { match ->
+                    addStyle(
+                        SpanStyle(
+                            background = highlightBackground,
+                            color = highlightForeground,
+                            fontWeight = FontWeight.Medium
+                        ),
+                        start = match.first,
+                        end = match.last + 1
+                    )
+                }
+            }
+        }
+    }
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
@@ -244,7 +290,7 @@ private fun MarkdownCodeBlock(
             }
             Text(
                 modifier = Modifier.horizontalScroll(rememberScrollState()),
-                text = content.ifBlank { " " },
+                text = highlightedCode,
                 style = MaterialTheme.typography.bodySmall.copy(
                     fontFamily = FontFamily.Monospace,
                     lineHeight = 18.sp
@@ -331,18 +377,26 @@ private fun MarkdownListBlock(
 }
 
 /**
- * Removes common inline Markdown delimiters so generated prose remains highlightable
- * when the generated range contains simple inline formatting.
+ * Converts generated Markdown into visible-text candidates. A generated edit may span
+ * multiple Markdown blocks, so each source line is matched independently against rendered
+ * blocks instead of requiring the entire edit to occur inside one block.
  */
-private fun normalizeGeneratedMarkdownText(source: String): String {
-    return source
-        .replace("**", "")
-        .replace("__", "")
-        .replace("~~", "")
-        .replace("*", "")
-        .replace("_", "")
-        .replace("`", "")
-        .trim()
+private fun normalizeGeneratedMarkdownSegments(source: String): List<String> {
+    return source.lineSequence()
+        .map { line ->
+            line.trim()
+                .takeUnless { it.startsWith("```") }
+                ?.replace(Regex("""^#{1,6}\s+"""), "")
+                ?.replace(Regex("""^>\s?"""), "")
+                ?.replace(Regex("""^(?:[-*+]\s+|\d+[.)]\s+)"""), "")
+                ?.replace(Regex("""\[([^]]+)]\([^)]+\)"""), "$1")
+                ?.replace(Regex("""(?:\*\*|__|~~|`|[*_])"""), "")
+                ?.replace(Regex("""\s+"""), " ")
+                ?.trim()
+        }
+        .filterNotNull()
+        .filter { it.isNotBlank() && !it.matches(Regex("""[-*_]{3,}""")) }
+        .distinct()
 }
 
 /** 将纯 Markdown 行内模型映射为带有 Compose 样式的 AnnotatedString。 */
