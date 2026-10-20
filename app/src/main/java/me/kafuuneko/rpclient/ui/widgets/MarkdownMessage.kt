@@ -397,6 +397,7 @@ private fun normalizeGeneratedMarkdownSegments(source: String): List<String> {
         .filterNotNull()
         .filter { it.isNotBlank() && !it.matches(Regex("""[-*_]{3,}""")) }
         .distinct()
+        .toList()
 }
 
 /** 将纯 Markdown 行内模型映射为带有 Compose 样式的 AnnotatedString。 */
