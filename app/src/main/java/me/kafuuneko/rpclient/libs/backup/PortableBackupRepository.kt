@@ -1024,4 +1024,13 @@ class PortableBackupRepository(
         destination.parentFile?.mkdirs()
         if (!source.renameTo(destination)) copyDirectory(source, destination)
     }
+    /**
+     * Remove SQLite sidecar files before/after replacing a database file. Keeping a stale WAL,
+     * SHM, or rollback journal beside the restored database can corrupt or override its contents.
+     */
+    private fun deleteSidecars(databaseFile: File) {
+        File(databaseFile.path + "-wal").delete()
+        File(databaseFile.path + "-shm").delete()
+        File(databaseFile.path + "-journal").delete()
+    }
 }
