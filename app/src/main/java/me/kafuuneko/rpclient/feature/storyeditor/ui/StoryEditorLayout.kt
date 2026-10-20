@@ -1419,7 +1419,7 @@ private fun StoryTextEditor(
                                 horizontalArrangement = Arrangement.End
                             ) {
                                 TextButton(onClick = { returnToMarkdownPreview() }) {
-                                    Text(stringResource(R.string.done))
+                                    Text(stringResource(R.string.confirm))
                                 }
                             }
                             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
