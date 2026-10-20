@@ -1,4 +1,4 @@
-name: Build APK
+name: Build Signed Release APK
 
 on:
   workflow_dispatch:
@@ -7,43 +7,74 @@ permissions:
   contents: read
 
 concurrency:
-  group: build-apk-${{ github.ref }}
+  group: build-release-signed-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   build:
-    name: Build debug APK
+    name: Build signed release APK
     runs-on: ubuntu-latest
     timeout-minutes: 45
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Set up JDK
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "21"
           cache: gradle
-
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
-
-      - name: Build debug APK
-        run: ./gradlew --no-daemon assembleDebug
-
-      - name: Verify APK exists
+      - name: Validate signing secrets
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
         shell: bash
         run: |
+          set -euo pipefail
+          for name in RELEASE_KEYSTORE_BASE64 RELEASE_STORE_PASSWORD RELEASE_KEY_ALIAS RELEASE_KEY_PASSWORD; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Missing GitHub Actions secret: $name"
+              exit 1
+            fi
+          done
+      - name: Decode signing keystore
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' "$RELEASE_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release-keystore.jks"
+          chmod 600 "$RUNNER_TEMP/release-keystore.jks"
+      - name: Build signed release APK
+        env:
+          RELEASE_STORE_FILE: ${{ runner.temp }}/release-keystore.jks
+          RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: ./gradlew --no-daemon assembleRelease
+      - name: Verify and stage APK
+        shell: bash
+        run: |
+          set -euo pipefail
           mkdir -p build-artifacts
-          find app/build/outputs/apk/debug -maxdepth 1 -type f -name "*.apk" -print -quit | grep -q .
-          cp app/build/outputs/apk/debug/*.apk build-artifacts/
-
-      - name: Upload APK artifact
+          apk="$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' -print -quit)"
+          if [[ -z "$apk" ]]; then
+            echo "::error::No release APK was produced"
+            exit 1
+          fi
+          cp "$apk" build-artifacts/RPClient-release-signed.apk
+      - name: Upload signed release APK
         uses: actions/upload-artifact@v4
         with:
-          name: RPClient-debug-apk-${{ github.run_number }}
-          path: build-artifacts/*.apk
+          name: RPClient-release-signed-${{ github.run_number }}
+          path: build-artifacts/RPClient-release-signed.apk
           if-no-files-found: error
           retention-days: 14
+      - name: Remove temporary keystore
+        if: always()
+        shell: bash
+        run: rm -f "$RUNNER_TEMP/release-keystore.jks"
