@@ -173,7 +173,7 @@ class BackupArchiveRepository(
     }
 
     private fun isSafeArchivePath(name: String): Boolean {
-        if (name.isBlank() || name.startsWith("/") || name.startsWith("\\\\") || name.contains('\\\\')) return false
+        if (name.isBlank() || name.startsWith("/") || name.startsWith("\\") || name.contains('\\')) return false
         // ZIP tools commonly add explicit directory entries with a trailing slash.
         val normalized = name.removeSuffix("/")
         val parts = normalized.split('/')
