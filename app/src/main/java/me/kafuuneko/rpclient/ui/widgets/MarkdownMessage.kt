@@ -57,7 +57,8 @@ import me.kafuuneko.rpclient.utils.MarkdownParser
 fun MarkdownMessageText(
     content: String,
     isUser: Boolean,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    blockSpacing: androidx.compose.ui.unit.Dp = 10.dp
 ) {
     val blocks = remember(content) { MarkdownParser.parseBlocks(content) }
     val textColor = if (isUser) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
@@ -87,7 +88,7 @@ fun MarkdownMessageText(
         SelectionContainer(modifier = modifier.fillMaxWidth()) {
             Column(
                 modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+                verticalArrangement = Arrangement.spacedBy(blockSpacing)
             ) {
                 blocks.forEach { block ->
                     when (block) {

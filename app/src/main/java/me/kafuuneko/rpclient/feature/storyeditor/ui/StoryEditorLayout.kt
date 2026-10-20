@@ -1400,12 +1400,13 @@ private fun StoryTextEditor(
                                 modifier = Modifier
                                     .weight(1f)
                                     .fillMaxWidth()
-                                    .clickable { markdownPreview = false }
+                                    .verticalScroll(rememberScrollState())
                             ) {
                                 MarkdownMessageText(
                                     content = editorState.text.toString(),
                                     isUser = false,
-                                    modifier = Modifier.fillMaxWidth()
+                                    modifier = Modifier.fillMaxWidth(),
+                                    blockSpacing = 16.dp
                                 )
                             }
                         }
