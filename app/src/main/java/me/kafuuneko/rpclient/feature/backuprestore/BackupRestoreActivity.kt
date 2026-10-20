@@ -35,15 +35,15 @@ import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 import me.kafuuneko.rpclient.R
 import me.kafuuneko.rpclient.feature.main.MainActivity
-import me.kafuuneko.rpclient.libs.backup.BackupArchiveRepository
 import me.kafuuneko.rpclient.libs.backup.BackupRestoreException
+import me.kafuuneko.rpclient.libs.backup.PortableBackupRepository
 import me.kafuuneko.rpclient.libs.core.CoreActivity
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.inject
 
-/** Hosts user-triggered ZIP backup and full restore through Android's document picker. */
+/** Hosts portable full-data ZIP backup and full replacement restore. */
 class BackupRestoreActivity : CoreActivity(), KoinComponent {
-    private val backupRepository by inject<BackupArchiveRepository>()
+    private val backupRepository by inject<PortableBackupRepository>()
 
     @Composable
     override fun ViewContent() {
@@ -69,19 +69,19 @@ class BackupRestoreActivity : CoreActivity(), KoinComponent {
                 }
             }
         }
-        val importLauncher = rememberLauncherForActivityResult(
-            ActivityResultContracts.OpenDocument()
-        ) { uri -> restoreUri = uri }
+        val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) {
+            restoreUri = it
+        }
 
         Surface(modifier = Modifier.fillMaxSize()) {
             Column(
                 modifier = Modifier.fillMaxSize().padding(24.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                Text(text = getString(R.string.backup_restore_title), style = MaterialTheme.typography.headlineSmall)
-                Text(text = getString(R.string.backup_restore_description), style = MaterialTheme.typography.bodyMedium)
+                Text(getString(R.string.backup_restore_title), style = MaterialTheme.typography.headlineSmall)
+                Text(getString(R.string.backup_restore_description), style = MaterialTheme.typography.bodyMedium)
                 Text(
-                    text = getString(R.string.backup_restore_security_warning),
+                    getString(R.string.backup_restore_security_warning),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error
                 )
@@ -89,7 +89,7 @@ class BackupRestoreActivity : CoreActivity(), KoinComponent {
                 Button(
                     modifier = Modifier.fillMaxWidth(),
                     enabled = !busy,
-                    onClick = { exportLauncher.launch("RPClient-Backup.zip") }
+                    onClick = { exportLauncher.launch("RPClient-Portable-Data.zip") }
                 ) { Text(getString(R.string.backup_export_action)) }
                 OutlinedButton(
                     modifier = Modifier.fillMaxWidth(),
@@ -106,47 +106,42 @@ class BackupRestoreActivity : CoreActivity(), KoinComponent {
 
         if (restoreUri != null) {
             AlertDialog(
-                onDismissRequest = { restoreUri = null },
+                onDismissRequest = { if (!busy) restoreUri = null },
                 title = { Text(getString(R.string.backup_restore_confirm_title)) },
                 text = { Text(getString(R.string.backup_restore_confirm_message)) },
                 confirmButton = {
-                    TextButton(
-                        enabled = !busy,
-                        onClick = {
-                            val selectedUri = restoreUri ?: return@TextButton
-                            restoreUri = null
-                            busy = true
-                            status = getString(R.string.backup_working)
-                            lifecycleScope.launch {
-                                try {
-                                    backupRepository.restoreArchive(selectedUri)
-                                    status = getString(R.string.backup_restore_success)
+                    TextButton(enabled = !busy, onClick = {
+                        val selectedUri = restoreUri ?: return@TextButton
+                        restoreUri = null
+                        busy = true
+                        status = getString(R.string.backup_working)
+                        lifecycleScope.launch {
+                            try {
+                                backupRepository.restoreArchive(selectedUri)
+                                status = getString(R.string.backup_restore_success)
+                                restartApp()
+                            } catch (error: Throwable) {
+                                val restoreError = error as? BackupRestoreException
+                                status = getString(
+                                    R.string.backup_operation_failed,
+                                    error.message ?: error.javaClass.simpleName
+                                )
+                                busy = false
+                                if (restoreError?.restartRequired == true) {
+                                    Toast.makeText(this@BackupRestoreActivity, R.string.backup_restarting, Toast.LENGTH_LONG).show()
                                     restartApp()
-                                } catch (error: Throwable) {
-                                    val restoreError = error as? BackupRestoreException
-                                    status = getString(R.string.backup_operation_failed, error.message ?: error.javaClass.simpleName)
-                                    busy = false
-                                    if (restoreError?.restartRequired == true) {
-                                        Toast.makeText(
-                                            this@BackupRestoreActivity,
-                                            R.string.backup_restarting,
-                                            Toast.LENGTH_LONG
-                                        ).show()
-                                        restartApp()
-                                    }
                                 }
                             }
                         }
-                    ) { Text(getString(R.string.backup_restore_action)) }
+                    }) { Text(getString(R.string.backup_restore_action)) }
                 },
                 dismissButton = {
-                    TextButton(onClick = { restoreUri = null }) { Text(getString(R.string.cancel)) }
+                    TextButton(enabled = !busy, onClick = { restoreUri = null }) { Text(getString(R.string.cancel)) }
                 }
             )
         }
     }
 
-    /** Restart in a fresh process so Koin and Room reopen restored files from disk. */
     private fun restartApp() {
         val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
             ?: Intent(this, MainActivity::class.java)
@@ -156,11 +151,7 @@ class BackupRestoreActivity : CoreActivity(), KoinComponent {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
-        alarmManager.set(
-            AlarmManager.ELAPSED_REALTIME,
-            SystemClock.elapsedRealtime() + 700,
-            pendingIntent
-        )
+        alarmManager.set(AlarmManager.ELAPSED_REALTIME, SystemClock.elapsedRealtime() + 700, pendingIntent)
         finishAffinity()
         Process.killProcess(Process.myPid())
     }

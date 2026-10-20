@@ -1,34 +1,31 @@
-# Manual ZIP backup and restore
+# Portable full-data backup and restore
 
-RPClient's **Settings → Data & System → Backup & Restore** screen creates and restores a portable ZIP snapshot.
+RPClient's **Settings → Data & System → Backup & Restore** screen creates `RPClient-Portable-Data.zip`.
 
 ## Archive layout
 
 ```text
-RPClient-Backup.zip
+RPClient-Portable-Data.zip
 ├── manifest.json
+├── settings.json
+├── settings/shared_prefs/*.xml
 ├── database/
-│   └── primary.sqlite
-├── settings/
-│   └── shared_prefs/
-│       └── *.xml
-└── files/
-    └── repository/
-        └── <app-private files>
+│   ├── primary/schema.json
+│   ├── primary/tables/*.jsonl
+│   ├── request-logs/schema.json
+│   └── request-logs/tables/*.jsonl
+├── attachments/repository/
+└── app-files/
 ```
 
-- `manifest.json` identifies the archive format and version and contains a SHA-256 checksum for `database/primary.sqlite`.
-- `primary.sqlite` contains relational data such as characters, chats, stories, world books, provider settings, and their relationships.
-- `settings/shared_prefs/` contains app preferences.
-- `files/repository/` contains app-managed file assets. Temporary staging files are omitted.
-- `request_logs.sqlite` is intentionally excluded.
+Every table from the main Room database is exported to JSONL, including characters, provider configurations and API keys, provider associations, single chats and messages, Group Chat sessions/members/messages/summaries, stories/volumes/chapters/relations, World Books and entries, regex scripts and authorizations, file references, message-image references, and token usage. The separate request-log database is also included. Binary repository assets and app files are copied, and original preference XML is retained alongside a readable `settings.json` index/content representation.
 
-## Editing and restoring
+`manifest.json` records format/version, included components, file sizes, and SHA-256 checksums. The restore flow validates archive paths, checksums, size and SQLite integrity before replacing current data. Existing legacy `rpclient-backup` ZIP snapshots remain supported for restore.
 
-The ZIP is intentionally unencrypted so it can be inspected with ordinary ZIP and SQLite tools. You can edit the database with a SQLite editor and repack the archive, but keep the archive layout and update `manifest.json`'s `databaseSha256` if you change the database. Restore rejects unknown archive formats, unsupported versions, path traversal, oversized archives, a non-SQLite database, and a database checksum mismatch before replacing live data.
+## Full restore behavior
 
-This first version restores a full snapshot; it does **not** convert arbitrary character/story/lorebook JSON files added to new folders into database records. Use RPClient's existing per-feature import flows for those portable JSON formats. Do not add unknown files expecting them to be imported automatically.
+Restore is **full replacement**, not merge. It replaces the primary database, request-log database, app preferences, repository assets, and app files, then restarts RPClient. If file replacement fails, the app attempts to restore a rollback snapshot. Keep a separate backup before restoring if the current installation contains data you may want later.
 
-## Sensitive data warning
+## Security
 
-The archive may contain API keys, custom request headers, provider endpoints, conversations, and personal settings. Store it privately and do not share it. The ZIP is not encrypted. Restore replaces the current database, preferences, and app-managed repository files. The current files are kept in a temporary rollback snapshot while replacement is performed; the app restarts after a successful restore so Room and preferences are reopened from disk.
+The ZIP is not encrypted. It may contain API keys, custom headers, provider endpoints, raw request/response logs, personal prompts, conversations, and image/character assets. Anyone who obtains the ZIP can inspect it. Store it securely and do not share it publicly.
