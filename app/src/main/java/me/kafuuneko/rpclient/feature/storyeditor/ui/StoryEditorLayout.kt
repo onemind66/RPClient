@@ -1501,8 +1501,8 @@ private fun StoryTextEditor(
                 )
             ),
             scrollState = editorScrollState,
-            onTextLayout = { layoutResult ->
-                editorTextLayout = layoutResult
+            onTextLayout = { _, layoutResult ->
+                editorTextLayout = layoutResult()
             },
             cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
             outputTransformation = latestEditedOutputTransformation,
