@@ -2,6 +2,8 @@ package me.kafuuneko.rpclient.ui.widgets
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -61,7 +63,8 @@ fun MarkdownMessageText(
     modifier: Modifier = Modifier,
     blockSpacing: androidx.compose.ui.unit.Dp = 10.dp,
     highlightedText: String? = null,
-    highlightedOccurrenceIndex: Int = 0
+    highlightedOccurrenceIndex: Int = 0,
+    onHighlightedPosition: ((Float) -> Unit)? = null
 ) {
     val blocks = remember(content) { MarkdownParser.parseBlocks(content) }
     val textColor = if (isUser) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
@@ -103,10 +106,20 @@ fun MarkdownMessageText(
                 val rangesByBlock = remember(highlightRanges) {
                     highlightRanges.groupBy { it.blockIndex }
                 }
+                val highlightedStartBlock = highlightRanges.firstOrNull()?.blockIndex
                 blocks.forEachIndexed { blockIndex, block ->
                     val blockRanges = rangesByBlock[blockIndex].orEmpty()
                         .filter { it.listItemIndex == null }
                         .map { it.start until it.endExclusive }
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .onGloballyPositioned { coordinates ->
+                            if (blockIndex == highlightedStartBlock) {
+                                onHighlightedPosition?.invoke(coordinates.positionInParent().y)
+                            }
+                        }
+                    ) {
                     when (block) {
                         is MarkdownBlock.Paragraph -> MarkdownInlineText(
                             content = block.content,
@@ -166,6 +179,7 @@ fun MarkdownMessageText(
                                 .height(1.dp)
                                 .background(subtleColor.copy(alpha = 0.25f))
                         )
+                    }
                     }
                 }
             }

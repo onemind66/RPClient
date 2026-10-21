@@ -126,6 +126,7 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -1296,6 +1297,9 @@ private fun StoryTextEditor(
     val editorScrollState = rememberScrollState()
     val markdownPreviewScrollState = rememberScrollState()
     val coroutineScope = rememberCoroutineScope()
+    var editorTextLayout by remember(document.chapterId) { mutableStateOf<TextLayoutResult?>(null) }
+    var markdownHighlightedStartY by remember(document.chapterId) { mutableStateOf<Float?>(null) }
+    var wasGenerationActive by remember(document.chapterId) { mutableStateOf(false) }
     val markdownEnabled = AppModel.storyMarkdownRenderingEnabled
     val markdownController = LocalStoryMarkdownEditorController.current
     val markdownPreview = markdownController.preview
@@ -1332,15 +1336,21 @@ private fun StoryTextEditor(
                 (markdownPreviewScrollState.maxValue * fraction).toInt()
             )
         } else {
-            withFrameNanos { }
             val fraction = if (markdownPreviewScrollState.maxValue > 0) {
                 markdownPreviewScrollState.value.toFloat() / markdownPreviewScrollState.maxValue
             } else {
                 0f
             }
+            withFrameNanos { }
             editorScrollState.scrollTo((editorScrollState.maxValue * fraction).toInt())
             focusRequester.requestFocus()
             keyboardController?.show()
+            // Focus and IME insets can change the viewport after the first restoration.
+            // Re-apply the target after those layout passes instead of leaving the cursor
+            // reveal logic to override the user's previous scroll position.
+            withFrameNanos { }
+            withFrameNanos { }
+            editorScrollState.scrollTo((editorScrollState.maxValue * fraction).toInt())
         }
     }
     val followStreamingOutput = generationState is StoryGenerationState.Streaming
@@ -1414,6 +1424,43 @@ private fun StoryTextEditor(
                 previousMax = max
             }
     }
+    LaunchedEffect(generationState, document.syncVersion, markdownPreview) {
+        val generationActive = generationState is StoryGenerationState.Preparing ||
+            generationState is StoryGenerationState.Streaming ||
+            generationState is StoryGenerationState.Applying
+        if (generationActive) {
+            wasGenerationActive = true
+            return@LaunchedEffect
+        }
+        if (!wasGenerationActive || generationState !is StoryGenerationState.Idle) {
+            return@LaunchedEffect
+        }
+        val range = document.latestEditedRange ?: return@LaunchedEffect
+        if (range.start < 0 || range.start >= range.end || range.end > document.content.length) {
+            return@LaunchedEffect
+        }
+        wasGenerationActive = false
+
+        // Wait for the final document sync and its corresponding layout before reading coordinates.
+        withFrameNanos { }
+        withFrameNanos { }
+        if (markdownEnabled && markdownPreview) {
+            val targetY = markdownHighlightedStartY
+            if (targetY != null) {
+                markdownPreviewScrollState.scrollTo(
+                    targetY.toInt().coerceIn(0, markdownPreviewScrollState.maxValue)
+                )
+            }
+        } else {
+            val targetY = editorTextLayout
+                ?.getCursorRect(range.start)
+                ?.top
+                ?.toInt()
+            if (targetY != null) {
+                editorScrollState.scrollTo(targetY.coerceIn(0, editorScrollState.maxValue))
+            }
+        }
+    }
     LaunchedEffect(editorState) {
         snapshotFlow {
             StoryEditorSnapshot(
@@ -1454,6 +1501,9 @@ private fun StoryTextEditor(
                 )
             ),
             scrollState = editorScrollState,
+            onTextLayout = { _, layoutResult ->
+                editorTextLayout = layoutResult
+            },
             cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
             outputTransformation = latestEditedOutputTransformation,
             decorator = { innerTextField ->
@@ -1505,7 +1555,10 @@ private fun StoryTextEditor(
                                     modifier = Modifier.fillMaxWidth(),
                                     blockSpacing = 16.dp,
                                     highlightedText = highlightedText,
-                                    highlightedOccurrenceIndex = highlightedOccurrenceIndex
+                                    highlightedOccurrenceIndex = highlightedOccurrenceIndex,
+                                    onHighlightedPosition = { position ->
+                                        markdownHighlightedStartY = position
+                                    }
                                 )
                                 }
                                 Column(
