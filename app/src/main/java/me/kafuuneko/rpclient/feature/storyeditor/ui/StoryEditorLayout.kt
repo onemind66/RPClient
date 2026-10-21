@@ -34,7 +34,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -139,9 +138,7 @@ import androidx.window.core.layout.WindowSizeClass
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
 import java.util.Locale
 import me.kafuuneko.rpclient.R
 import me.kafuuneko.rpclient.feature.storyeditor.model.StoryChapterDestination
@@ -1358,11 +1355,10 @@ private fun StoryTextEditor(
             // automatic scroll can happen after the initial restoration, especially while
             // the IME is changing the available height. Wait for the IME/layout to settle,
             // then restore the intended viewport using the final scroll range.
-            withTimeoutOrNull(700L) {
-                snapshotFlow { WindowInsets.isImeVisible }.first { it }
-            }
-            // IME visibility is reported before all resulting measure/layout work has
-            // necessarily completed, so let the next layout frames settle before restoring.
+            // Give the IME and its insets a bounded settling interval before the
+            // final restoration. Avoid reading the composable-only isImeVisible API
+            // from this coroutine context.
+            delay(250L)
             withFrameNanos { }
             withFrameNanos { }
             editorScrollState.scrollTo(
