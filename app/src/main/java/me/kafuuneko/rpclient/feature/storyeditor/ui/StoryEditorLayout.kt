@@ -137,6 +137,7 @@ import androidx.window.core.layout.WindowSizeClass
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.launch
 import java.util.Locale
 import me.kafuuneko.rpclient.R
 import me.kafuuneko.rpclient.feature.storyeditor.model.StoryChapterDestination
