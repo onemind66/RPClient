@@ -114,6 +114,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -1290,6 +1291,7 @@ private fun StoryTextEditor(
 ) {
     // 正文不使用 rememberSaveable，避免长文进入 Activity Bundle；Room 承担进程恢复。
     val editorScrollState = rememberScrollState()
+    val markdownPreviewScrollState = rememberScrollState()
     val markdownEnabled = AppModel.storyMarkdownRenderingEnabled
     val markdownController = LocalStoryMarkdownEditorController.current
     val markdownPreview = markdownController.preview
@@ -1314,7 +1316,25 @@ private fun StoryTextEditor(
         returnToMarkdownPreview()
     }
     LaunchedEffect(markdownPreview, markdownEnabled) {
-        if (markdownEnabled && !markdownPreview) {
+        if (!markdownEnabled) return@LaunchedEffect
+        if (markdownPreview) {
+            val fraction = if (editorScrollState.maxValue > 0) {
+                editorScrollState.value.toFloat() / editorScrollState.maxValue
+            } else {
+                0f
+            }
+            withFrameNanos { }
+            markdownPreviewScrollState.scrollTo(
+                (markdownPreviewScrollState.maxValue * fraction).toInt()
+            )
+        } else {
+            withFrameNanos { }
+            val fraction = if (markdownPreviewScrollState.maxValue > 0) {
+                markdownPreviewScrollState.value.toFloat() / markdownPreviewScrollState.maxValue
+            } else {
+                0f
+            }
+            editorScrollState.scrollTo((editorScrollState.maxValue * fraction).toInt())
             focusRequester.requestFocus()
             keyboardController?.show()
         }
@@ -1378,6 +1398,18 @@ private fun StoryTextEditor(
             editorScrollState.scrollTo(bottom)
         }
     }
+    LaunchedEffect(followStreamingOutput, markdownPreviewScrollState) {
+        if (!followStreamingOutput || !markdownPreview) return@LaunchedEffect
+        var previousMax = markdownPreviewScrollState.maxValue
+        snapshotFlow { markdownPreviewScrollState.value to markdownPreviewScrollState.maxValue }
+            .collect { (value, max) ->
+                val wasFollowingBottom = previousMax == 0 || value >= previousMax - 48
+                if (max > previousMax && wasFollowingBottom) {
+                    markdownPreviewScrollState.scrollTo(max)
+                }
+                previousMax = max
+            }
+    }
     LaunchedEffect(editorState) {
         snapshotFlow {
             StoryEditorSnapshot(
@@ -1434,7 +1466,7 @@ private fun StoryTextEditor(
                                 modifier = Modifier
                                     .weight(1f)
                                     .fillMaxWidth()
-                                    .verticalScroll(rememberScrollState())
+                                    .verticalScroll(markdownPreviewScrollState)
                             ) {
                                 MarkdownMessageText(
                                     content = editorState.text.toString(),
@@ -1442,8 +1474,25 @@ private fun StoryTextEditor(
                                     modifier = Modifier.fillMaxWidth(),
                                     blockSpacing = 16.dp,
                                     highlightedText = displayedEditedRange
-                                        ?.takeIf { it.end <= editorState.text.length }
-                                        ?.let { editorState.text.toString().substring(it.start, it.end) }
+                                        ?.takeIf { it.start >= 0 && it.start < it.end && it.end <= editorState.text.length }
+                                        ?.let { editorState.text.toString().substring(it.start, it.end) },
+                                    highlightedOccurrenceIndex = displayedEditedRange
+                                        ?.takeIf { it.start >= 0 && it.start < it.end && it.end <= editorState.text.length }
+                                        ?.let { range ->
+                                            val source = editorState.text.toString()
+                                            val needle = source.substring(range.start, range.end)
+                                            if (needle.isBlank()) 0 else {
+                                                var count = 0
+                                                var from = 0
+                                                while (from < range.start) {
+                                                    val found = source.indexOf(needle, from)
+                                                    if (found < 0 || found >= range.start) break
+                                                    count++
+                                                    from = found + needle.length
+                                                }
+                                                count
+                                            }
+                                        }
                                 )
                             }
                         }

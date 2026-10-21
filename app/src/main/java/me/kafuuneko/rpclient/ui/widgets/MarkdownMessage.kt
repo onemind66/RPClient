@@ -59,7 +59,8 @@ fun MarkdownMessageText(
     isUser: Boolean,
     modifier: Modifier = Modifier,
     blockSpacing: androidx.compose.ui.unit.Dp = 10.dp,
-    highlightedText: String? = null
+    highlightedText: String? = null,
+    highlightedOccurrenceIndex: Int = 0
 ) {
     val blocks = remember(content) { MarkdownParser.parseBlocks(content) }
     val textColor = if (isUser) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
@@ -91,7 +92,22 @@ fun MarkdownMessageText(
                 modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(blockSpacing)
             ) {
+                var occurrencesBeforeBlock = 0
                 blocks.forEach { block ->
+                    val blockVisibleText = when (block) {
+                        is MarkdownBlock.Paragraph -> visibleMarkdownText(block.content)
+                        is MarkdownBlock.Heading -> visibleMarkdownText(block.content)
+                        is MarkdownBlock.Code -> block.content
+                        is MarkdownBlock.Quote -> visibleMarkdownText(block.content)
+                        is MarkdownBlock.ListBlock -> block.items.joinToString("\n") { visibleMarkdownText(it.content) }
+                        MarkdownBlock.Divider -> ""
+                    }
+                    val blockOccurrenceCount = countMarkdownOccurrences(blockVisibleText, highlightedText)
+                    val occurrenceInBlock = highlightedOccurrenceIndex - occurrencesBeforeBlock
+                    val blockHighlight = highlightedText.takeIf {
+                        occurrenceInBlock >= 0 && occurrenceInBlock < blockOccurrenceCount
+                    }
+                    occurrencesBeforeBlock += blockOccurrenceCount
                     when (block) {
                         is MarkdownBlock.Paragraph -> MarkdownInlineText(
                             content = block.content,
@@ -99,7 +115,8 @@ fun MarkdownMessageText(
                             narrationColor = narrationColor,
                             linkColor = linkColor,
                             strongColor = strongColor,
-                            highlightedText = highlightedText,
+                            highlightedText = blockHighlight,
+                            highlightedOccurrenceIndex = occurrenceInBlock.coerceAtLeast(0),
                             style = MaterialTheme.typography.bodyMedium
                         )
 
@@ -109,7 +126,8 @@ fun MarkdownMessageText(
                             narrationColor = narrationColor,
                             linkColor = linkColor,
                             strongColor = strongColor,
-                            highlightedText = highlightedText,
+                            highlightedText = blockHighlight,
+                            highlightedOccurrenceIndex = occurrenceInBlock.coerceAtLeast(0),
                             style = block.headingStyle()
                         )
 
@@ -118,7 +136,8 @@ fun MarkdownMessageText(
                             language = block.language,
                             color = textColor,
                             backgroundColor = blockColor,
-                            highlightedText = highlightedText
+                            highlightedText = blockHighlight,
+                            highlightedOccurrenceIndex = occurrenceInBlock.coerceAtLeast(0)
                         )
 
                         is MarkdownBlock.Quote -> MarkdownQuoteBlock(
@@ -127,7 +146,8 @@ fun MarkdownMessageText(
                             narrationColor = narrationColor,
                             linkColor = linkColor,
                             strongColor = strongColor,
-                            highlightedText = highlightedText,
+                            highlightedText = blockHighlight,
+                            highlightedOccurrenceIndex = occurrenceInBlock.coerceAtLeast(0),
                             backgroundColor = blockColor
                         )
 
@@ -137,7 +157,8 @@ fun MarkdownMessageText(
                             narrationColor = narrationColor,
                             linkColor = linkColor,
                             strongColor = strongColor,
-                            highlightedText = highlightedText,
+                            highlightedText = blockHighlight,
+                            highlightedOccurrenceIndex = occurrenceInBlock.coerceAtLeast(0),
                             markerColor = subtleColor
                         )
 
@@ -171,6 +192,7 @@ private fun MarkdownInlineText(
     linkColor: Color,
     strongColor: Color,
     highlightedText: String? = null,
+    highlightedOccurrenceIndex: Int = 0,
     style: TextStyle,
     modifier: Modifier = Modifier
 ) {
@@ -200,7 +222,9 @@ private fun MarkdownInlineText(
                     searchFrom = match + needle.length
                 }
             }
-        }.distinct()
+        }.distinct().let { allMatches ->
+            allMatches.getOrNull(highlightedOccurrenceIndex)?.let(::listOf).orEmpty()
+        }
         if (matches.isNotEmpty()) {
             buildAnnotatedString {
                 append(rendered)
@@ -234,11 +258,12 @@ private fun MarkdownCodeBlock(
     language: String?,
     color: Color,
     backgroundColor: Color,
-    highlightedText: String? = null
+    highlightedText: String? = null,
+    highlightedOccurrenceIndex: Int = 0
 ) {
     val highlightBackground = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
     val highlightForeground = MaterialTheme.colorScheme.primary
-    val highlightedCode = remember(content, highlightedText, highlightBackground, highlightForeground) {
+    val highlightedCode = remember(content, highlightedText, highlightedOccurrenceIndex, highlightBackground, highlightForeground) {
         val needles = highlightedText?.let(::normalizeGeneratedMarkdownSegments).orEmpty()
         val matches = buildList {
             needles.forEach { needle ->
@@ -250,7 +275,9 @@ private fun MarkdownCodeBlock(
                     searchFrom = match + needle.length
                 }
             }
-        }.distinct()
+        }.distinct().let { allMatches ->
+            allMatches.getOrNull(highlightedOccurrenceIndex)?.let(::listOf).orEmpty()
+        }
         if (matches.isEmpty()) {
             AnnotatedString(content.ifBlank { " " })
         } else {
@@ -309,6 +336,7 @@ private fun MarkdownQuoteBlock(
     linkColor: Color,
     strongColor: Color,
     highlightedText: String? = null,
+    highlightedOccurrenceIndex: Int = 0,
     backgroundColor: Color
 ) {
     Surface(
@@ -336,6 +364,7 @@ private fun MarkdownQuoteBlock(
                 linkColor = linkColor,
                 strongColor = strongColor,
                 highlightedText = highlightedText,
+                highlightedOccurrenceIndex = highlightedOccurrenceIndex,
                 style = MaterialTheme.typography.bodyMedium
             )
         }
@@ -350,10 +379,21 @@ private fun MarkdownListBlock(
     linkColor: Color,
     strongColor: Color,
     highlightedText: String? = null,
+    highlightedOccurrenceIndex: Int = 0,
     markerColor: Color
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+        var occurrencesBeforeItem = 0
         block.items.forEach { item ->
+            val itemOccurrenceCount = countMarkdownOccurrences(
+                visibleMarkdownText(item.content),
+                highlightedText
+            )
+            val occurrenceInItem = highlightedOccurrenceIndex - occurrencesBeforeItem
+            val itemHighlight = highlightedText.takeIf {
+                occurrenceInItem >= 0 && occurrenceInItem < itemOccurrenceCount
+            }
+            occurrencesBeforeItem += itemOccurrenceCount
             Row(verticalAlignment = Alignment.Top) {
                 Text(
                     modifier = Modifier.width(24.dp),
@@ -368,11 +408,45 @@ private fun MarkdownListBlock(
                     narrationColor = narrationColor,
                     linkColor = linkColor,
                     strongColor = strongColor,
-                    highlightedText = highlightedText,
+                    highlightedText = itemHighlight,
+                    highlightedOccurrenceIndex = occurrenceInItem.coerceAtLeast(0),
                     style = MaterialTheme.typography.bodyMedium
                 )
             }
         }
+    }
+}
+
+private fun visibleMarkdownText(source: String): String =
+    buildString {
+        fun appendParts(parts: List<MarkdownInline>) {
+            parts.forEach { part ->
+                when (part) {
+                    is MarkdownInline.Text -> append(part.content)
+                    is MarkdownInline.Code -> append(part.content)
+                    is MarkdownInline.Strong -> appendParts(part.content)
+                    is MarkdownInline.Emphasis -> appendParts(part.content)
+                    is MarkdownInline.Strikethrough -> appendParts(part.content)
+                    is MarkdownInline.Link -> appendParts(part.content)
+                }
+            }
+        }
+        appendParts(MarkdownParser.parseInline(source))
+    }
+
+private fun countMarkdownOccurrences(content: String, highlightedText: String?): Int {
+    val needles = highlightedText?.let(::normalizeGeneratedMarkdownSegments).orEmpty()
+    return needles.sumOf { needle ->
+        if (needle.isBlank()) return@sumOf 0
+        var count = 0
+        var from = 0
+        while (from < content.length) {
+            val found = content.indexOf(needle, from)
+            if (found < 0) break
+            count++
+            from = found + needle.length
+        }
+        count
     }
 }
 
