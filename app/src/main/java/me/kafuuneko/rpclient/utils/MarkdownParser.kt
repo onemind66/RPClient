@@ -139,6 +139,16 @@ internal object MarkdownParser {
 
             // Unclosed delimiters are retained as plain text for streaming intermediate states.
             val parsed = when {
+                source.startsWith("***", index) -> parseDelimited(source, index, "***") {
+                    MarkdownInline.Strong(
+                        listOf(MarkdownInline.Emphasis(parseInline(it)))
+                    )
+                }
+                source.startsWith("___", index) -> parseDelimited(source, index, "___") {
+                    MarkdownInline.Strong(
+                        listOf(MarkdownInline.Emphasis(parseInline(it)))
+                    )
+                }
                 source[index] == '`' -> {
                     val runLength = source.substring(index).takeWhile { it == '`' }.length
                     val delimiter = "`".repeat(runLength)

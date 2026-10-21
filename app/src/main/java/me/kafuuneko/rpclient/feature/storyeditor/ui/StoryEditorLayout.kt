@@ -111,6 +111,7 @@ import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -1293,6 +1294,7 @@ private fun StoryTextEditor(
     // 正文不使用 rememberSaveable，避免长文进入 Activity Bundle；Room 承担进程恢复。
     val editorScrollState = rememberScrollState()
     val markdownPreviewScrollState = rememberScrollState()
+    val coroutineScope = rememberCoroutineScope()
     val markdownEnabled = AppModel.storyMarkdownRenderingEnabled
     val markdownController = LocalStoryMarkdownEditorController.current
     val markdownPreview = markdownController.preview
@@ -1467,8 +1469,18 @@ private fun StoryTextEditor(
                                 modifier = Modifier
                                     .weight(1f)
                                     .fillMaxWidth()
-                                    .verticalScroll(markdownPreviewScrollState)
                             ) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .draggableScrollIndicator(
+                                            state = markdownPreviewScrollState,
+                                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.9f),
+                                            thumbThickness = 6.dp
+                                        )
+                                        .verticalScroll(markdownPreviewScrollState)
+                                        .padding(end = 36.dp)
+                                ) {
                                 val sourceText = editorState.text.toString()
                                 val editedRange = displayedEditedRange?.takeIf {
                                     it.start >= 0 && it.start < it.end && it.end <= sourceText.length
@@ -1494,6 +1506,57 @@ private fun StoryTextEditor(
                                     highlightedText = highlightedText,
                                     highlightedOccurrenceIndex = highlightedOccurrenceIndex
                                 )
+                                }
+                                Column(
+                                    modifier = Modifier
+                                        .align(Alignment.TopEnd)
+                                        .fillMaxHeight(),
+                                    verticalArrangement = Arrangement.SpaceBetween,
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    Surface(
+                                        shape = CircleShape,
+                                        color = MaterialTheme.colorScheme.surfaceVariant,
+                                        shadowElevation = 3.dp
+                                    ) {
+                                        IconButton(
+                                            onClick = {
+                                                coroutineScope.launch {
+                                                    markdownPreviewScrollState.animateScrollTo(0)
+                                                }
+                                            },
+                                            modifier = Modifier.size(36.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Rounded.ArrowUpward,
+                                                contentDescription = "Scroll to top",
+                                                tint = MaterialTheme.colorScheme.primary
+                                            )
+                                        }
+                                    }
+                                    Surface(
+                                        shape = CircleShape,
+                                        color = MaterialTheme.colorScheme.surfaceVariant,
+                                        shadowElevation = 3.dp
+                                    ) {
+                                        IconButton(
+                                            onClick = {
+                                                coroutineScope.launch {
+                                                    markdownPreviewScrollState.animateScrollTo(
+                                                        markdownPreviewScrollState.maxValue
+                                                    )
+                                                }
+                                            },
+                                            modifier = Modifier.size(36.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Rounded.ArrowDownward,
+                                                contentDescription = "Scroll to bottom",
+                                                tint = MaterialTheme.colorScheme.primary
+                                            )
+                                        }
+                                    }
+                                }
                             }
                         }
                     } else if (markdownEnabled) {

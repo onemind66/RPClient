@@ -179,4 +179,25 @@ class MarkdownParserTest {
             MarkdownParser.parseInline("keep *the text")
         )
     }
+    @Test
+    fun tripleAsterisksAndUnderscoresRenderAsBoldItalic() {
+        assertEquals(
+            listOf(
+                MarkdownInline.Strong(
+                    listOf(MarkdownInline.Emphasis(listOf(MarkdownInline.Text("xxx"))))
+                )
+            ),
+            MarkdownParser.parseInline("***xxx***")
+        )
+        assertEquals(
+            listOf(
+                MarkdownInline.Strong(
+                    listOf(MarkdownInline.Emphasis(listOf(MarkdownInline.Text("xxx"))))
+                )
+            ),
+            MarkdownParser.parseInline("___xxx___")
+        )
+        assertEquals("xxx", visibleInline(MarkdownParser.parseInline("***xxx***")))
+    }
+
 }
