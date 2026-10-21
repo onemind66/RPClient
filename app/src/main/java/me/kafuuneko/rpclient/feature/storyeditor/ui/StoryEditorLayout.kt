@@ -141,6 +141,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.Locale
 import me.kafuuneko.rpclient.R
 import me.kafuuneko.rpclient.feature.storyeditor.model.StoryChapterDestination
@@ -1286,6 +1287,7 @@ private fun CurrentChapterBar(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun StoryTextEditor(
     modifier: Modifier,
@@ -1351,12 +1353,22 @@ private fun StoryTextEditor(
             editorScrollState.scrollTo((editorScrollState.maxValue * fraction).toInt())
             focusRequester.requestFocus()
             keyboardController?.show()
-            // Focus and IME insets can change the viewport after the first restoration.
-            // Re-apply the target after those layout passes instead of leaving the cursor
-            // reveal logic to override the user's previous scroll position.
+
+            // BasicTextField may reveal the existing cursor when focus is acquired. That
+            // automatic scroll can happen after the initial restoration, especially while
+            // the IME is changing the available height. Wait for the IME/layout to settle,
+            // then restore the intended viewport using the final scroll range.
+            withTimeoutOrNull(700L) {
+                snapshotFlow { WindowInsets.isImeVisible }.first { it }
+            }
+            // IME visibility is reported before all resulting measure/layout work has
+            // necessarily completed, so let the next layout frames settle before restoring.
             withFrameNanos { }
             withFrameNanos { }
-            editorScrollState.scrollTo((editorScrollState.maxValue * fraction).toInt())
+            editorScrollState.scrollTo(
+                (editorScrollState.maxValue * fraction).toInt()
+                    .coerceIn(0, editorScrollState.maxValue)
+            )
         }
     }
     val followStreamingOutput = generationState is StoryGenerationState.Streaming
