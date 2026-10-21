@@ -1492,7 +1492,7 @@ private fun StoryTextEditor(
                                                 }
                                                 count
                                             }
-                                        }
+                                        } ?: 0
                                 )
                             }
                         }
