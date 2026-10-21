@@ -26,6 +26,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -64,7 +66,7 @@ fun MarkdownMessageText(
     blockSpacing: androidx.compose.ui.unit.Dp = 10.dp,
     highlightedText: String? = null,
     highlightedOccurrenceIndex: Int = 0,
-    onHighlightedPosition: ((Float) -> Unit)? = null
+    onHighlightedPosition: ((Float?) -> Unit)? = null
 ) {
     val blocks = remember(content) { MarkdownParser.parseBlocks(content) }
     val textColor = if (isUser) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
@@ -107,79 +109,91 @@ fun MarkdownMessageText(
                     highlightRanges.groupBy { it.blockIndex }
                 }
                 val highlightedStartBlock = highlightRanges.firstOrNull()?.blockIndex
+                if (highlightedStartBlock == null && onHighlightedPosition != null) {
+                    // Clear any previous coordinate when the latest edit cannot be mapped.
+                    SideEffect { onHighlightedPosition(null) }
+                }
                 blocks.forEachIndexed { blockIndex, block ->
                     val blockRanges = rangesByBlock[blockIndex].orEmpty()
                         .filter { it.listItemIndex == null }
                         .map { it.start until it.endExclusive }
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .onGloballyPositioned { coordinates ->
-                            if (blockIndex == highlightedStartBlock) {
-                                onHighlightedPosition?.invoke(coordinates.positionInParent().y)
-                            }
-                        }
+                    // Recreate only the highlighted block when its content/range changes so its
+                    // layout callback reports coordinates for the latest generated text.
+                    key(
+                        blockIndex,
+                        block.takeIf { blockIndex == highlightedStartBlock },
+                        blockRanges.takeIf { blockIndex == highlightedStartBlock }
                     ) {
-                    when (block) {
-                        is MarkdownBlock.Paragraph -> MarkdownInlineText(
-                            content = block.content,
-                            color = textColor,
-                            narrationColor = narrationColor,
-                            linkColor = linkColor,
-                            strongColor = strongColor,
-                            highlightedRanges = blockRanges,
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-
-                        is MarkdownBlock.Heading -> MarkdownInlineText(
-                            content = block.content,
-                            color = textColor,
-                            narrationColor = narrationColor,
-                            linkColor = linkColor,
-                            strongColor = strongColor,
-                            highlightedRanges = blockRanges,
-                            style = block.headingStyle()
-                        )
-
-                        is MarkdownBlock.Code -> MarkdownCodeBlock(
-                            content = block.content,
-                            language = block.language,
-                            color = textColor,
-                            backgroundColor = blockColor,
-                            highlightedRanges = blockRanges
-                        )
-
-                        is MarkdownBlock.Quote -> MarkdownQuoteBlock(
-                            content = block.content,
-                            color = textColor,
-                            narrationColor = narrationColor,
-                            linkColor = linkColor,
-                            strongColor = strongColor,
-                            highlightedRanges = blockRanges,
-                            backgroundColor = blockColor
-                        )
-
-                        is MarkdownBlock.ListBlock -> MarkdownListBlock(
-                            block = block,
-                            color = textColor,
-                            narrationColor = narrationColor,
-                            linkColor = linkColor,
-                            strongColor = strongColor,
-                            highlightedRangesByItem = List(block.items.size) { itemIndex ->
-                                rangesByBlock[blockIndex].orEmpty()
-                                    .filter { it.listItemIndex == itemIndex }
-                                    .map { it.start until it.endExclusive }
-                            },
-                            markerColor = subtleColor
-                        )
-
-                        MarkdownBlock.Divider -> Box(
+                        Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(1.dp)
-                                .background(subtleColor.copy(alpha = 0.25f))
-                        )
-                    }
+                                .onGloballyPositioned { coordinates ->
+                                    if (blockIndex == highlightedStartBlock) {
+                                        onHighlightedPosition?.invoke(coordinates.positionInParent().y)
+                                    }
+                                }
+                        ) {
+                            when (block) {
+                                is MarkdownBlock.Paragraph -> MarkdownInlineText(
+                                    content = block.content,
+                                    color = textColor,
+                                    narrationColor = narrationColor,
+                                    linkColor = linkColor,
+                                    strongColor = strongColor,
+                                    highlightedRanges = blockRanges,
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+
+                                is MarkdownBlock.Heading -> MarkdownInlineText(
+                                    content = block.content,
+                                    color = textColor,
+                                    narrationColor = narrationColor,
+                                    linkColor = linkColor,
+                                    strongColor = strongColor,
+                                    highlightedRanges = blockRanges,
+                                    style = block.headingStyle()
+                                )
+
+                                is MarkdownBlock.Code -> MarkdownCodeBlock(
+                                    content = block.content,
+                                    language = block.language,
+                                    color = textColor,
+                                    backgroundColor = blockColor,
+                                    highlightedRanges = blockRanges
+                                )
+
+                                is MarkdownBlock.Quote -> MarkdownQuoteBlock(
+                                    content = block.content,
+                                    color = textColor,
+                                    narrationColor = narrationColor,
+                                    linkColor = linkColor,
+                                    strongColor = strongColor,
+                                    highlightedRanges = blockRanges,
+                                    backgroundColor = blockColor
+                                )
+
+                                is MarkdownBlock.ListBlock -> MarkdownListBlock(
+                                    block = block,
+                                    color = textColor,
+                                    narrationColor = narrationColor,
+                                    linkColor = linkColor,
+                                    strongColor = strongColor,
+                                    highlightedRangesByItem = List(block.items.size) { itemIndex ->
+                                        rangesByBlock[blockIndex].orEmpty()
+                                            .filter { it.listItemIndex == itemIndex }
+                                            .map { it.start until it.endExclusive }
+                                    },
+                                    markerColor = subtleColor
+                                )
+
+                                MarkdownBlock.Divider -> Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(1.dp)
+                                        .background(subtleColor.copy(alpha = 0.25f))
+                                )
+                            }
+                        }
                     }
                 }
             }

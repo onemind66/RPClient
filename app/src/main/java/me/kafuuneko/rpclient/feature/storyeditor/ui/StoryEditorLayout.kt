@@ -108,6 +108,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -138,6 +139,7 @@ import androidx.window.core.layout.WindowSizeClass
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.util.Locale
 import me.kafuuneko.rpclient.R
@@ -1298,8 +1300,12 @@ private fun StoryTextEditor(
     val markdownPreviewScrollState = rememberScrollState()
     val coroutineScope = rememberCoroutineScope()
     var editorTextLayout by remember(document.chapterId) { mutableStateOf<TextLayoutResult?>(null) }
+    var editorTextLayoutSyncVersion by remember(document.chapterId) { mutableLongStateOf(-1L) }
+    var editorTextLayoutLength by remember(document.chapterId) { mutableIntStateOf(-1) }
     var markdownHighlightedStartY by remember(document.chapterId) { mutableStateOf<Float?>(null) }
-    var wasGenerationActive by remember(document.chapterId) { mutableStateOf(false) }
+    var markdownHighlightedPositionSyncVersion by remember(document.chapterId) { mutableLongStateOf(-1L) }
+    var markdownHighlightedPositionLength by remember(document.chapterId) { mutableIntStateOf(-1) }
+    var shouldScrollToGeneratedRange by remember(document.chapterId) { mutableStateOf(false) }
     val markdownEnabled = AppModel.storyMarkdownRenderingEnabled
     val markdownController = LocalStoryMarkdownEditorController.current
     val markdownPreview = markdownController.preview
@@ -1424,35 +1430,63 @@ private fun StoryTextEditor(
                 previousMax = max
             }
     }
-    LaunchedEffect(generationState, document.syncVersion, markdownPreview) {
-        val generationActive = generationState is StoryGenerationState.Preparing ||
-            generationState is StoryGenerationState.Streaming ||
-            generationState is StoryGenerationState.Applying
-        if (generationActive) {
-            wasGenerationActive = true
-            return@LaunchedEffect
+    LaunchedEffect(generationState, document.syncVersion, markdownPreview, markdownEnabled) {
+        when (generationState) {
+            is StoryGenerationState.Applying -> {
+                // Only a successfully applied result should trigger an automatic scroll.
+                shouldScrollToGeneratedRange = true
+                return@LaunchedEffect
+            }
+            is StoryGenerationState.Failed,
+            is StoryGenerationState.Preparing,
+            is StoryGenerationState.Streaming -> {
+                shouldScrollToGeneratedRange = false
+                return@LaunchedEffect
+            }
+            is StoryGenerationState.Idle -> Unit
         }
-        if (!wasGenerationActive || generationState !is StoryGenerationState.Idle) {
-            return@LaunchedEffect
-        }
-        val range = document.latestEditedRange ?: return@LaunchedEffect
-        if (range.start < 0 || range.start >= range.end || range.end > document.content.length) {
-            return@LaunchedEffect
-        }
-        wasGenerationActive = false
+        if (!shouldScrollToGeneratedRange) return@LaunchedEffect
 
-        // Wait for the final document sync and its corresponding layout before reading coordinates.
-        withFrameNanos { }
-        withFrameNanos { }
+        val range = document.latestEditedRange
+        if (
+            range == null ||
+            range.start < 0 ||
+            range.start >= range.end ||
+            range.end > document.content.length
+        ) {
+            shouldScrollToGeneratedRange = false
+            return@LaunchedEffect
+        }
+
+        val targetContent = document.content
+        val targetContentLength = targetContent.length
+        val targetSyncVersion = document.syncVersion
+        // The document and TextFieldState are synchronized asynchronously. Wait for the final
+        // content, then wait for a layout tagged with the same document revision and text length.
+        snapshotFlow { editorState.text.toString() }.first { it == targetContent }
+
         if (markdownEnabled && markdownPreview) {
-            val targetY = markdownHighlightedStartY
+            val targetY = snapshotFlow {
+                Triple(
+                    markdownHighlightedPositionSyncVersion,
+                    markdownHighlightedPositionLength,
+                    markdownHighlightedStartY
+                )
+            }.first { (version, length, _) ->
+                version == targetSyncVersion && length == targetContentLength
+            }.third
             if (targetY != null) {
                 markdownPreviewScrollState.scrollTo(
                     targetY.toInt().coerceIn(0, markdownPreviewScrollState.maxValue)
                 )
             }
         } else {
-            val targetY = editorTextLayout
+            val textLayout = snapshotFlow {
+                Triple(editorTextLayoutSyncVersion, editorTextLayoutLength, editorTextLayout)
+            }.first { (version, length, layoutResult) ->
+                version == targetSyncVersion && length == targetContentLength && layoutResult != null
+            }.third
+            val targetY = textLayout
                 ?.getCursorRect(range.start)
                 ?.top
                 ?.toInt()
@@ -1460,6 +1494,7 @@ private fun StoryTextEditor(
                 editorScrollState.scrollTo(targetY.coerceIn(0, editorScrollState.maxValue))
             }
         }
+        shouldScrollToGeneratedRange = false
     }
     LaunchedEffect(editorState) {
         snapshotFlow {
@@ -1501,8 +1536,14 @@ private fun StoryTextEditor(
                 )
             ),
             scrollState = editorScrollState,
-            onTextLayout = { _, layoutResult ->
-                editorTextLayout = layoutResult()
+            onTextLayout = { getResult ->
+                val layoutResult = getResult()
+                if (layoutResult != null && layoutResult.layoutInput.text.text == document.content) {
+                    // Never tag a stale layout with the latest document revision.
+                    editorTextLayout = layoutResult
+                    editorTextLayoutSyncVersion = document.syncVersion
+                    editorTextLayoutLength = layoutResult.layoutInput.text.length
+                }
             },
             cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
             outputTransformation = latestEditedOutputTransformation,
@@ -1557,7 +1598,14 @@ private fun StoryTextEditor(
                                     highlightedText = highlightedText,
                                     highlightedOccurrenceIndex = highlightedOccurrenceIndex,
                                     onHighlightedPosition = { position ->
-                                        markdownHighlightedStartY = position
+                                        // Layout callbacks can arrive before the TextFieldState has
+                                        // caught up with the document flow. Do not label those
+                                        // coordinates as belonging to the new document revision.
+                                        if (sourceText == document.content) {
+                                            markdownHighlightedStartY = position
+                                            markdownHighlightedPositionSyncVersion = document.syncVersion
+                                            markdownHighlightedPositionLength = sourceText.length
+                                        }
                                     }
                                 )
                                 }
