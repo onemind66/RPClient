@@ -48,8 +48,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.input.OutputTransformation
 import androidx.compose.foundation.text.input.TextFieldState
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -141,6 +140,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.Locale
 import me.kafuuneko.rpclient.R
 import me.kafuuneko.rpclient.feature.storyeditor.model.StoryChapterDestination
@@ -1310,8 +1310,9 @@ private fun StoryTextEditor(
     val markdownEnabled = AppModel.storyMarkdownRenderingEnabled
     val markdownController = LocalStoryMarkdownEditorController.current
     val markdownPreview = markdownController.preview
-    val focusRequester = remember(document.chapterId) { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
+    val imeVisibleState = rememberUpdatedState(WindowInsets.isImeVisible)
     val returnToMarkdownPreview: () -> Unit = {
         // Publish the latest field contents before switching away from raw editing.
         StoryEditorUiIntent.EditorSnapshotChanged(
@@ -1322,6 +1323,7 @@ private fun StoryTextEditor(
             )
         ).emit()
         markdownController.preview = true
+        focusManager.clearFocus(force = true)
         keyboardController?.hide()
     }
     SideEffect {
@@ -1332,42 +1334,45 @@ private fun StoryTextEditor(
     }
     LaunchedEffect(markdownPreview, markdownEnabled) {
         if (!markdownEnabled) return@LaunchedEffect
-        if (markdownPreview) {
-            val fraction = if (editorScrollState.maxValue > 0) {
-                editorScrollState.value.toFloat() / editorScrollState.maxValue
-            } else {
-                0f
-            }
-            withFrameNanos { }
-            markdownPreviewScrollState.scrollTo(
-                (markdownPreviewScrollState.maxValue * fraction).toInt()
-            )
-        } else {
-            val fraction = if (markdownPreviewScrollState.maxValue > 0) {
-                markdownPreviewScrollState.value.toFloat() / markdownPreviewScrollState.maxValue
-            } else {
-                0f
-            }
-            withFrameNanos { }
-            editorScrollState.scrollTo((editorScrollState.maxValue * fraction).toInt())
-            focusRequester.requestFocus()
-            keyboardController?.show()
 
-            // BasicTextField may reveal the existing cursor when focus is acquired. That
-            // automatic scroll can happen after the initial restoration, especially while
-            // the IME is changing the available height. Wait for the IME/layout to settle,
-            // then restore the intended viewport using the final scroll range.
-            // Give the IME and its insets a bounded settling interval before the
-            // final restoration. Avoid reading the composable-only isImeVisible API
-            // from this coroutine context.
-            delay(250L)
-            withFrameNanos { }
-            withFrameNanos { }
-            editorScrollState.scrollTo(
-                (editorScrollState.maxValue * fraction).toInt()
-                    .coerceIn(0, editorScrollState.maxValue)
-            )
+        // Preserve the source viewport as a fraction while the two modes have different
+        // content/layout heights. Restore only after any IME transition has finished.
+        val sourceScrollState = if (markdownPreview) {
+            editorScrollState
+        } else {
+            markdownPreviewScrollState
         }
+        val scrollFraction = if (sourceScrollState.maxValue > 0) {
+            (sourceScrollState.value.toFloat() / sourceScrollState.maxValue).coerceIn(0f, 1f)
+        } else {
+            0f
+        }
+
+        if (imeVisibleState.value) {
+            keyboardController?.hide()
+            // Insets changes can resize the editor after the mode switch. Observe the
+            // Compose state rather than reading WindowInsets from a coroutine snapshot.
+            withTimeoutOrNull(IME_VISIBILITY_SETTLE_TIMEOUT_MILLIS) {
+                snapshotFlow { imeVisibleState.value }.first { isVisible -> !isVisible }
+            }
+        } else if (!markdownPreview) {
+            // Opening Raw Text is a viewing action, not an implicit request to start editing.
+            keyboardController?.hide()
+        }
+
+        withFrameNanos { }
+        withFrameNanos { }
+
+        val targetScrollState = if (markdownPreview) {
+            markdownPreviewScrollState
+        } else {
+            editorScrollState
+        }
+        targetScrollState.scrollTo(
+            (targetScrollState.maxValue * scrollFraction)
+                .toInt()
+                .coerceIn(0, targetScrollState.maxValue)
+        )
     }
     val followStreamingOutput = generationState is StoryGenerationState.Streaming
     val generatedTextColor = MaterialTheme.colorScheme.primary
@@ -1536,8 +1541,7 @@ private fun StoryTextEditor(
             state = editorState,
             modifier = Modifier
                 .fillMaxSize()
-                .draggableScrollIndicator(editorScrollState)
-                .focusRequester(focusRequester),
+                .draggableScrollIndicator(editorScrollState),
             enabled = editable && (!markdownEnabled || !markdownPreview),
             textStyle = MaterialTheme.typography.bodyLarge.merge(
                 TextStyle(
@@ -4370,4 +4374,5 @@ private fun StoryGenerationStatusCardPreview() {
 }
 
 private const val SLOW_GENERATION_HINT_SECONDS = 12L
+private const val IME_VISIBILITY_SETTLE_TIMEOUT_MILLIS = 750L
 private const val REASONING_SCROLL_BOTTOM_TOLERANCE_PX = 2
