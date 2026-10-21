@@ -40,6 +40,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import me.kafuuneko.rpclient.utils.MarkdownBlock
+import me.kafuuneko.rpclient.utils.MarkdownHighlightMapper
 import me.kafuuneko.rpclient.utils.MarkdownInline
 import me.kafuuneko.rpclient.utils.MarkdownParser
 
@@ -92,22 +93,20 @@ fun MarkdownMessageText(
                 modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(blockSpacing)
             ) {
-                var occurrencesBeforeBlock = 0
-                blocks.forEach { block ->
-                    val blockVisibleText = when (block) {
-                        is MarkdownBlock.Paragraph -> visibleMarkdownText(block.content)
-                        is MarkdownBlock.Heading -> visibleMarkdownText(block.content)
-                        is MarkdownBlock.Code -> block.content
-                        is MarkdownBlock.Quote -> visibleMarkdownText(block.content)
-                        is MarkdownBlock.ListBlock -> block.items.joinToString("\n") { visibleMarkdownText(it.content) }
-                        MarkdownBlock.Divider -> ""
-                    }
-                    val blockOccurrenceCount = countMarkdownOccurrences(blockVisibleText, highlightedText)
-                    val occurrenceInBlock = highlightedOccurrenceIndex - occurrencesBeforeBlock
-                    val blockHighlight = highlightedText.takeIf {
-                        occurrenceInBlock >= 0 && occurrenceInBlock < blockOccurrenceCount
-                    }
-                    occurrencesBeforeBlock += blockOccurrenceCount
+                val highlightRanges = remember(blocks, highlightedText, highlightedOccurrenceIndex) {
+                    MarkdownHighlightMapper.findRanges(
+                        blocks = blocks,
+                        highlightedText = highlightedText,
+                        occurrenceIndex = highlightedOccurrenceIndex
+                    )
+                }
+                val rangesByBlock = remember(highlightRanges) {
+                    highlightRanges.groupBy { it.blockIndex }
+                }
+                blocks.forEachIndexed { blockIndex, block ->
+                    val blockRanges = rangesByBlock[blockIndex].orEmpty()
+                        .filter { it.listItemIndex == null }
+                        .map { it.start until it.endExclusive }
                     when (block) {
                         is MarkdownBlock.Paragraph -> MarkdownInlineText(
                             content = block.content,
@@ -115,8 +114,7 @@ fun MarkdownMessageText(
                             narrationColor = narrationColor,
                             linkColor = linkColor,
                             strongColor = strongColor,
-                            highlightedText = blockHighlight,
-                            highlightedOccurrenceIndex = occurrenceInBlock.coerceAtLeast(0),
+                            highlightedRanges = blockRanges,
                             style = MaterialTheme.typography.bodyMedium
                         )
 
@@ -126,8 +124,7 @@ fun MarkdownMessageText(
                             narrationColor = narrationColor,
                             linkColor = linkColor,
                             strongColor = strongColor,
-                            highlightedText = blockHighlight,
-                            highlightedOccurrenceIndex = occurrenceInBlock.coerceAtLeast(0),
+                            highlightedRanges = blockRanges,
                             style = block.headingStyle()
                         )
 
@@ -136,8 +133,7 @@ fun MarkdownMessageText(
                             language = block.language,
                             color = textColor,
                             backgroundColor = blockColor,
-                            highlightedText = blockHighlight,
-                            highlightedOccurrenceIndex = occurrenceInBlock.coerceAtLeast(0)
+                            highlightedRanges = blockRanges
                         )
 
                         is MarkdownBlock.Quote -> MarkdownQuoteBlock(
@@ -146,8 +142,7 @@ fun MarkdownMessageText(
                             narrationColor = narrationColor,
                             linkColor = linkColor,
                             strongColor = strongColor,
-                            highlightedText = blockHighlight,
-                            highlightedOccurrenceIndex = occurrenceInBlock.coerceAtLeast(0),
+                            highlightedRanges = blockRanges,
                             backgroundColor = blockColor
                         )
 
@@ -157,8 +152,11 @@ fun MarkdownMessageText(
                             narrationColor = narrationColor,
                             linkColor = linkColor,
                             strongColor = strongColor,
-                            highlightedText = blockHighlight,
-                            highlightedOccurrenceIndex = occurrenceInBlock.coerceAtLeast(0),
+                            highlightedRangesByItem = List(block.items.size) { itemIndex ->
+                                rangesByBlock[blockIndex].orEmpty()
+                                    .filter { it.listItemIndex == itemIndex }
+                                    .map { it.start until it.endExclusive }
+                            },
                             markerColor = subtleColor
                         )
 
@@ -191,15 +189,14 @@ private fun MarkdownInlineText(
     narrationColor: Color,
     linkColor: Color,
     strongColor: Color,
-    highlightedText: String? = null,
-    highlightedOccurrenceIndex: Int = 0,
+    highlightedRanges: List<IntRange> = emptyList(),
     style: TextStyle,
     modifier: Modifier = Modifier
 ) {
     val highlightBackground = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
     val highlightForeground = MaterialTheme.colorScheme.primary
     val text = remember(
-        content, color, narrationColor, linkColor, strongColor, highlightedText,
+        content, color, narrationColor, linkColor, strongColor, highlightedRanges,
         highlightBackground, highlightForeground
     ) {
         val rendered = buildAnnotatedString {
@@ -211,32 +208,23 @@ private fun MarkdownInlineText(
                 strongColor = strongColor
             )
         }
-        val needles = highlightedText?.let(::normalizeGeneratedMarkdownSegments).orEmpty()
-        val matches = buildList {
-            needles.forEach { needle ->
-                var searchFrom = 0
-                while (needle.isNotBlank() && searchFrom < rendered.length) {
-                    val match = rendered.text.indexOf(needle, searchFrom)
-                    if (match < 0) break
-                    add(match until (match + needle.length))
-                    searchFrom = match + needle.length
-                }
-            }
-        }.distinct().let { allMatches ->
-            allMatches.getOrNull(highlightedOccurrenceIndex)?.let(::listOf).orEmpty()
+        val validRanges = highlightedRanges.mapNotNull { range ->
+            val start = range.first.coerceIn(0, rendered.length)
+            val end = (range.last + 1).coerceIn(start, rendered.length)
+            (start until end).takeIf { start < end }
         }
-        if (matches.isNotEmpty()) {
+        if (validRanges.isNotEmpty()) {
             buildAnnotatedString {
                 append(rendered)
-                matches.forEach { match ->
+                validRanges.forEach { range ->
                     addStyle(
                         SpanStyle(
                             background = highlightBackground,
                             color = highlightForeground,
                             fontWeight = FontWeight.Medium
                         ),
-                        start = match.first,
-                        end = match.last + 1
+                        start = range.first,
+                        end = range.last + 1
                     )
                 }
             }
@@ -258,40 +246,31 @@ private fun MarkdownCodeBlock(
     language: String?,
     color: Color,
     backgroundColor: Color,
-    highlightedText: String? = null,
-    highlightedOccurrenceIndex: Int = 0
+    highlightedRanges: List<IntRange> = emptyList()
 ) {
     val highlightBackground = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
     val highlightForeground = MaterialTheme.colorScheme.primary
-    val highlightedCode = remember(content, highlightedText, highlightedOccurrenceIndex, highlightBackground, highlightForeground) {
-        val needles = highlightedText?.let(::normalizeGeneratedMarkdownSegments).orEmpty()
-        val matches = buildList {
-            needles.forEach { needle ->
-                var searchFrom = 0
-                while (needle.isNotBlank() && searchFrom < content.length) {
-                    val match = content.indexOf(needle, searchFrom)
-                    if (match < 0) break
-                    add(match until (match + needle.length))
-                    searchFrom = match + needle.length
-                }
-            }
-        }.distinct().let { allMatches ->
-            allMatches.getOrNull(highlightedOccurrenceIndex)?.let(::listOf).orEmpty()
+    val highlightedCode = remember(content, highlightedRanges, highlightBackground, highlightForeground) {
+        val displayContent = content.ifBlank { " " }
+        val validRanges = highlightedRanges.mapNotNull { range ->
+            val start = range.first.coerceIn(0, content.length)
+            val end = (range.last + 1).coerceIn(start, content.length)
+            (start until end).takeIf { start < end }
         }
-        if (matches.isEmpty()) {
-            AnnotatedString(content.ifBlank { " " })
+        if (validRanges.isEmpty()) {
+            AnnotatedString(displayContent)
         } else {
             buildAnnotatedString {
-                append(content.ifBlank { " " })
-                matches.filter { it.first < content.length && it.last < content.length }.forEach { match ->
+                append(displayContent)
+                validRanges.forEach { range ->
                     addStyle(
                         SpanStyle(
                             background = highlightBackground,
                             color = highlightForeground,
                             fontWeight = FontWeight.Medium
                         ),
-                        start = match.first,
-                        end = match.last + 1
+                        start = range.first,
+                        end = range.last + 1
                     )
                 }
             }
@@ -335,8 +314,7 @@ private fun MarkdownQuoteBlock(
     narrationColor: Color,
     linkColor: Color,
     strongColor: Color,
-    highlightedText: String? = null,
-    highlightedOccurrenceIndex: Int = 0,
+    highlightedRanges: List<IntRange> = emptyList(),
     backgroundColor: Color
 ) {
     Surface(
@@ -363,8 +341,7 @@ private fun MarkdownQuoteBlock(
                 narrationColor = narrationColor,
                 linkColor = linkColor,
                 strongColor = strongColor,
-                highlightedText = highlightedText,
-                highlightedOccurrenceIndex = highlightedOccurrenceIndex,
+                highlightedRanges = highlightedRanges,
                 style = MaterialTheme.typography.bodyMedium
             )
         }
@@ -378,23 +355,15 @@ private fun MarkdownListBlock(
     narrationColor: Color,
     linkColor: Color,
     strongColor: Color,
-    highlightedText: String? = null,
-    highlightedOccurrenceIndex: Int = 0,
+    highlightedRangesByItem: List<List<IntRange>> = emptyList(),
     markerColor: Color
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-        var occurrencesBeforeItem = 0
-        block.items.forEach { item ->
-            val itemOccurrenceCount = countMarkdownOccurrences(
-                visibleMarkdownText(item.content),
-                highlightedText
-            )
-            val occurrenceInItem = highlightedOccurrenceIndex - occurrencesBeforeItem
-            val itemHighlight = highlightedText.takeIf {
-                occurrenceInItem >= 0 && occurrenceInItem < itemOccurrenceCount
-            }
-            occurrencesBeforeItem += itemOccurrenceCount
-            Row(verticalAlignment = Alignment.Top) {
+        block.items.forEachIndexed { itemIndex, item ->
+            Row(
+                modifier = Modifier.padding(start = (item.indentLevel * 14).dp),
+                verticalAlignment = Alignment.Top
+            ) {
                 Text(
                     modifier = Modifier.width(24.dp),
                     text = item.marker,
@@ -408,70 +377,12 @@ private fun MarkdownListBlock(
                     narrationColor = narrationColor,
                     linkColor = linkColor,
                     strongColor = strongColor,
-                    highlightedText = itemHighlight,
-                    highlightedOccurrenceIndex = occurrenceInItem.coerceAtLeast(0),
+                    highlightedRanges = highlightedRangesByItem.getOrNull(itemIndex).orEmpty(),
                     style = MaterialTheme.typography.bodyMedium
                 )
             }
         }
     }
-}
-
-private fun visibleMarkdownText(source: String): String =
-    buildString {
-        fun appendParts(parts: List<MarkdownInline>) {
-            parts.forEach { part ->
-                when (part) {
-                    is MarkdownInline.Text -> append(part.content)
-                    is MarkdownInline.Code -> append(part.content)
-                    is MarkdownInline.Strong -> appendParts(part.content)
-                    is MarkdownInline.Emphasis -> appendParts(part.content)
-                    is MarkdownInline.Strikethrough -> appendParts(part.content)
-                    is MarkdownInline.Link -> appendParts(part.content)
-                }
-            }
-        }
-        appendParts(MarkdownParser.parseInline(source))
-    }
-
-private fun countMarkdownOccurrences(content: String, highlightedText: String?): Int {
-    val needles = highlightedText?.let(::normalizeGeneratedMarkdownSegments).orEmpty()
-    return needles.sumOf { needle ->
-        if (needle.isBlank()) return@sumOf 0
-        var count = 0
-        var from = 0
-        while (from < content.length) {
-            val found = content.indexOf(needle, from)
-            if (found < 0) break
-            count++
-            from = found + needle.length
-        }
-        count
-    }
-}
-
-/**
- * Converts generated Markdown into visible-text candidates. A generated edit may span
- * multiple Markdown blocks, so each source line is matched independently against rendered
- * blocks instead of requiring the entire edit to occur inside one block.
- */
-private fun normalizeGeneratedMarkdownSegments(source: String): List<String> {
-    return source.lineSequence()
-        .map { line ->
-            line.trim()
-                .takeUnless { it.startsWith("```") }
-                ?.replace(Regex("""^#{1,6}\s+"""), "")
-                ?.replace(Regex("""^>\s?"""), "")
-                ?.replace(Regex("""^(?:[-*+]\s+|\d+[.)]\s+)"""), "")
-                ?.replace(Regex("""\[([^]]+)]\([^)]+\)"""), "$1")
-                ?.replace(Regex("""(?:\*\*|__|~~|`|[*_])"""), "")
-                ?.replace(Regex("""\s+"""), " ")
-                ?.trim()
-        }
-        .filterNotNull()
-        .filter { it.isNotBlank() && !it.matches(Regex("""[-*_]{3,}""")) }
-        .distinct()
-        .toList()
 }
 
 /** 将纯 Markdown 行内模型映射为带有 Compose 样式的 AnnotatedString。 */

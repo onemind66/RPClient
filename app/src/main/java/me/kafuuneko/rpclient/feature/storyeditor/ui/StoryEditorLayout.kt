@@ -186,6 +186,7 @@ import me.kafuuneko.rpclient.ui.widgets.RpScrollableOutlinedTextField
 import me.kafuuneko.rpclient.ui.widgets.RpTagRow
 import me.kafuuneko.rpclient.ui.widgets.StoryUserPersonaCard
 import me.kafuuneko.rpclient.ui.widgets.MarkdownMessageText
+import me.kafuuneko.rpclient.utils.MarkdownHighlightMapper
 import me.kafuuneko.rpclient.libs.AppModel
 import me.kafuuneko.rpclient.ui.widgets.dragContainer
 import me.kafuuneko.rpclient.ui.widgets.draggableScrollIndicator
@@ -1398,7 +1399,7 @@ private fun StoryTextEditor(
             editorScrollState.scrollTo(bottom)
         }
     }
-    LaunchedEffect(followStreamingOutput, markdownPreviewScrollState) {
+    LaunchedEffect(followStreamingOutput, markdownPreview, markdownPreviewScrollState) {
         if (!followStreamingOutput || !markdownPreview) return@LaunchedEffect
         var previousMax = markdownPreviewScrollState.maxValue
         snapshotFlow { markdownPreviewScrollState.value to markdownPreviewScrollState.maxValue }
@@ -1468,31 +1469,30 @@ private fun StoryTextEditor(
                                     .fillMaxWidth()
                                     .verticalScroll(markdownPreviewScrollState)
                             ) {
+                                val sourceText = editorState.text.toString()
+                                val editedRange = displayedEditedRange?.takeIf {
+                                    it.start >= 0 && it.start < it.end && it.end <= sourceText.length
+                                }
+                                val highlightedText = editedRange?.let { range ->
+                                    sourceText.substring(range.start, range.end)
+                                }
+                                val highlightedOccurrenceIndex = if (
+                                    editedRange != null && !highlightedText.isNullOrBlank()
+                                ) {
+                                    MarkdownHighlightMapper.countOccurrencesBefore(
+                                        prefix = sourceText.substring(0, editedRange.start),
+                                        highlightedText = highlightedText
+                                    )
+                                } else {
+                                    0
+                                }
                                 MarkdownMessageText(
-                                    content = editorState.text.toString(),
+                                    content = sourceText,
                                     isUser = false,
                                     modifier = Modifier.fillMaxWidth(),
                                     blockSpacing = 16.dp,
-                                    highlightedText = displayedEditedRange
-                                        ?.takeIf { it.start >= 0 && it.start < it.end && it.end <= editorState.text.length }
-                                        ?.let { editorState.text.toString().substring(it.start, it.end) },
-                                    highlightedOccurrenceIndex = displayedEditedRange
-                                        ?.takeIf { it.start >= 0 && it.start < it.end && it.end <= editorState.text.length }
-                                        ?.let { range ->
-                                            val source = editorState.text.toString()
-                                            val needle = source.substring(range.start, range.end)
-                                            if (needle.isBlank()) 0 else {
-                                                var count = 0
-                                                var from = 0
-                                                while (from < range.start) {
-                                                    val found = source.indexOf(needle, from)
-                                                    if (found < 0 || found >= range.start) break
-                                                    count++
-                                                    from = found + needle.length
-                                                }
-                                                count
-                                            }
-                                        } ?: 0
+                                    highlightedText = highlightedText,
+                                    highlightedOccurrenceIndex = highlightedOccurrenceIndex
                                 )
                             }
                         }
