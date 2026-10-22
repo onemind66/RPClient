@@ -52,7 +52,6 @@ import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.FileUpload
-import androidx.compose.material.icons.rounded.Image as ImageIcon
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.KeyboardArrowUp
@@ -60,17 +59,11 @@ import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material.icons.rounded.Tune
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -81,8 +74,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -107,8 +103,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
 import me.kafuuneko.rpclient.R
+import me.kafuuneko.rpclient.feature.appearance.presentation.PageBackgroundUiState
 import me.kafuuneko.rpclient.feature.chat.model.ChatCharacterItem
 import me.kafuuneko.rpclient.feature.chat.model.ChatGenerationState
 import me.kafuuneko.rpclient.feature.chat.model.ChatLorebookEntryItem
@@ -123,6 +121,7 @@ import me.kafuuneko.rpclient.feature.chat.presentation.ChatLorebookState
 import me.kafuuneko.rpclient.feature.chat.presentation.ChatPage
 import me.kafuuneko.rpclient.feature.chat.presentation.ChatUiIntent
 import me.kafuuneko.rpclient.feature.chat.presentation.ChatUiState
+import me.kafuuneko.rpclient.libs.appearance.PageSurfaceKind
 import me.kafuuneko.rpclient.libs.media.MessageImageAction
 import me.kafuuneko.rpclient.libs.media.MessageImageState
 import me.kafuuneko.rpclient.model.MessageContentPart
@@ -140,18 +139,30 @@ import me.kafuuneko.rpclient.ui.message.MessageImageGallery
 import me.kafuuneko.rpclient.ui.theme.AppTheme
 import me.kafuuneko.rpclient.ui.theme.DefaultCharacterAccentColor
 import me.kafuuneko.rpclient.ui.theme.NarratorAvatarColor
+import me.kafuuneko.rpclient.ui.widgets.AppSurface
 import me.kafuuneko.rpclient.ui.widgets.AppTopBar
+import me.kafuuneko.rpclient.ui.widgets.LocalPageBottomBarOpacity
+import me.kafuuneko.rpclient.ui.widgets.LocalPageBubbleOpacity
+import me.kafuuneko.rpclient.ui.widgets.LocalPageTopBarOpacity
 import me.kafuuneko.rpclient.ui.widgets.MarkdownMessageText
 import me.kafuuneko.rpclient.ui.widgets.NoProviderBanner
+import me.kafuuneko.rpclient.ui.widgets.PageBackdrop
+import me.kafuuneko.rpclient.ui.widgets.PageSurface
 import me.kafuuneko.rpclient.ui.widgets.RpAvatar
 import me.kafuuneko.rpclient.ui.widgets.RpIconBubble
 import me.kafuuneko.rpclient.ui.widgets.RpLazyColumn
-import me.kafuuneko.rpclient.ui.widgets.RpMetaPill
 import me.kafuuneko.rpclient.ui.widgets.RpScrollableOutlinedTextField
 import me.kafuuneko.rpclient.ui.widgets.RpSectionHeader
 import me.kafuuneko.rpclient.ui.widgets.RpTagRow
 import me.kafuuneko.rpclient.ui.widgets.draggableLazyListScrollIndicator
+import me.kafuuneko.rpclient.ui.widgets.generalContentBackground
+import me.kafuuneko.rpclient.ui.widgets.pageCanvasColor
+import me.kafuuneko.rpclient.ui.widgets.pageUserBubbleContentColor
 import me.kafuuneko.rpclient.utils.toggle
+import androidx.compose.material.icons.rounded.Image as ImageIcon
+import me.kafuuneko.rpclient.ui.widgets.PageOutlinedButton as OutlinedButton
+import me.kafuuneko.rpclient.ui.widgets.PageOutlinedTextField as OutlinedTextField
+import me.kafuuneko.rpclient.ui.widgets.PageSwitch as Switch
 
 /** 当前窗口顶部进入该范围时预取更早消息。 */
 private const val HISTORY_LOAD_THRESHOLD = 4
@@ -160,6 +171,7 @@ private const val HISTORY_LOAD_THRESHOLD = 4
 @Composable
 fun ChatLayout(
     uiState: ChatUiState,
+    background: PageBackgroundUiState = PageBackgroundUiState(),
     emit: ChatUiIntent.() -> Unit
 ) {
     BackHandler(enabled = uiState is ChatUiState.Normal) { ChatUiIntent.Back.emit() }
@@ -168,21 +180,28 @@ fun ChatLayout(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(MaterialTheme.colorScheme.background)
+                    .background(pageCanvasColor())
             )
         }
 
-        is ChatUiState.Finished -> ChatLayout(uiState.previous) {}
+        is ChatUiState.Finished -> ChatLayout(uiState.previous, background) {}
 
         is ChatUiState.Normal -> {
-            when (uiState.page) {
-                ChatPage.Conversation -> ChatNormal(uiState, emit)
-                ChatPage.Settings -> ChatSettingsPage(
-                    session = uiState.session,
-                    lorebookState = uiState.lorebookState,
-                    loadState = uiState.loadState,
-                    emit = emit
-                )
+            // 页面切换只卸载视图，保留会话和设置各自的列表位置。
+            val pageStateHolder = rememberSaveableStateHolder()
+            // 设置子页沿用会话背景，公共表面按该页内容区参数装饰。
+            PageBackdrop(background, useContainerAppearance = uiState.page == ChatPage.Settings) {
+                pageStateHolder.SaveableStateProvider("${uiState.session.id}:${uiState.page.name}") {
+                    when (uiState.page) {
+                        ChatPage.Conversation -> ChatNormal(uiState, emit)
+                        ChatPage.Settings -> ChatSettingsPage(
+                            session = uiState.session,
+                            lorebookState = uiState.lorebookState,
+                            loadState = uiState.loadState,
+                            emit = emit
+                        )
+                    }
+                }
             }
             DialogSwitch(uiState, emit)
         }
@@ -195,6 +214,7 @@ private fun ChatNormal(
     state: ChatUiState.Normal,
     emit: ChatUiIntent.() -> Unit
 ) {
+    val activeSearchAnchor by rememberUpdatedState(state.conversationState.searchAnchorMessageId)
     val listState = rememberLazyListState()
     val isListDragged by listState.interactionSource.collectIsDraggedAsState()
     val canLoadOlderMessages by rememberUpdatedState(
@@ -203,28 +223,51 @@ private fun ChatNormal(
     val isLoadingOlderMessages by rememberUpdatedState(
         state.conversationState.isLoadingOlderMessages
     )
-    var shouldFollowBottom by remember { mutableStateOf(true) }
-    var isFirstLoad by remember { mutableStateOf(true) }
+    // 与列表位置一起恢复，返回设置前的历史阅读位置不应被首次定位或流式跟随覆盖。
+    var shouldFollowBottom by rememberSaveable { mutableStateOf(true) }
+    var isFirstLoad by rememberSaveable { mutableStateOf(true) }
     var isScrollIndicatorDragged by remember { mutableStateOf(false) }
-    var lastTailMessageId by remember { mutableStateOf<String?>(null) }
+    var lastTailMessageId by rememberSaveable { mutableStateOf<String?>(null) }
+    var lastSearchAnchor by rememberSaveable { mutableStateOf<String?>(null) }
 
     LaunchedEffect(listState) {
-        snapshotFlow { listState.canScrollForward to isScrollIndicatorDragged }
-            .collect { (canScrollForward, indicatorDragged) ->
-                if (indicatorDragged) {
-                    shouldFollowBottom = false
-                } else if (!canScrollForward) {
-                    shouldFollowBottom = true
-                }
+        // 恢复列表尚未完成测量时 canScrollForward 暂为 false，不能据此重新开启底部跟随。
+        snapshotFlow {
+            if (listState.layoutInfo.visibleItemsInfo.isEmpty()) null
+            else listState.canScrollForward to isScrollIndicatorDragged
+        }.collect { position ->
+            val (canScrollForward, indicatorDragged) = position ?: return@collect
+            if (indicatorDragged) {
+                shouldFollowBottom = false
+            } else if (activeSearchAnchor == null && !canScrollForward) {
+                shouldFollowBottom = true
             }
+        }
     }
 
     LaunchedEffect(isListDragged) {
         if (isListDragged) {
             snapshotFlow { listState.canScrollForward }
                 .collect { canScrollForward ->
-                    shouldFollowBottom = !canScrollForward
+                    shouldFollowBottom = activeSearchAnchor == null && !canScrollForward
                 }
+        }
+    }
+
+    val currentConversation by rememberUpdatedState(state.conversationState)
+    LaunchedEffect(listState) {
+        // 等待首次定位和新窗口测量完成，避免把旧布局的底部误认为最新消息。
+        snapshotFlow {
+            val conversation = currentConversation
+            val layout = listState.layoutInfo
+            conversation.messages.lastOrNull()?.id?.takeIf {
+                !isFirstLoad && conversation.searchAnchorMessageId != null &&
+                    !conversation.canLoadNewerMessages && !conversation.isLoadingNewerMessages &&
+                    layout.totalItemsCount == conversation.messages.size + 2 &&
+                    layout.visibleItemsInfo.isNotEmpty() && !listState.canScrollForward
+            }
+        }.filterNotNull().distinctUntilChanged().collect { messageId ->
+            ChatUiIntent.ReachLatestMessage(messageId).emit()
         }
     }
 
@@ -245,16 +288,24 @@ private fun ChatNormal(
 
     // 只有尾部消息身份改变时才滚到底部，头部加载历史不会打断用户位置
     val tailMessageId = state.conversationState.messages.lastOrNull()?.id
-    LaunchedEffect(tailMessageId) {
-        if (tailMessageId == null) {
-            lastTailMessageId = null
+    LaunchedEffect(tailMessageId, activeSearchAnchor) {
+        if (activeSearchAnchor != null) {
+            // 只在首次进入定位窗口时滚动，继续分页和流式刷新保持阅读位置。
+            if (isFirstLoad) {
+                val targetIndex = state.conversationState.messages.indexOfFirst { it.id == activeSearchAnchor }
+                if (targetIndex >= 0) listState.scrollToItem(targetIndex + 1)
+                isFirstLoad = false
+            }
+            shouldFollowBottom = false
+        } else if (tailMessageId == null) {
             isFirstLoad = true
-        } else if (isFirstLoad || tailMessageId != lastTailMessageId) {
+        } else if (isFirstLoad || tailMessageId != lastTailMessageId || lastSearchAnchor != null) {
             shouldFollowBottom = true
             listState.scrollToItem(state.conversationState.messages.size + 1)
             isFirstLoad = false
         }
         lastTailMessageId = tailMessageId
+        lastSearchAnchor = activeSearchAnchor
     }
 
     // - 内容流式生成或思考块折叠变动时，若处于跟随状态则自动跟随到底部
@@ -263,7 +314,7 @@ private fun ChatNormal(
         state.conversationState.expandedThinkBlockIds
     ) {
         if (state.conversationState.messages.isNotEmpty()) {
-            if (isFirstLoad || shouldFollowBottom) {
+            if (activeSearchAnchor == null && (isFirstLoad || shouldFollowBottom)) {
                 listState.scrollToItem(state.conversationState.messages.size + 1)
                 isFirstLoad = false
             }
@@ -278,7 +329,7 @@ private fun ChatNormal(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
+            .background(Color.Transparent)
     ) {
         CustomChatTopBar(
             session = state.session,
@@ -308,9 +359,11 @@ private fun ChatNormal(
                 )
                 .onSizeChanged { size ->
                     val newHeight = size.height
-                    if (previousListHeight > 0 && newHeight > 0 && newHeight != previousListHeight) {
+                    if (activeSearchAnchor == null && previousListHeight > 0 && newHeight > 0 && newHeight != previousListHeight) {
                         val delta = (previousListHeight - newHeight).toFloat()
                         coroutineScope.launch {
+                            // 尺寸回调仍处于测量阶段，下一帧再滚动以免重入布局。
+                            withFrameNanos { }
                             if (shouldFollowBottom && delta > 0) {
                                 listState.scrollToItem(state.conversationState.messages.size + 1)
                             } else {
@@ -372,6 +425,22 @@ private fun ChatNormal(
                 )
             }
             item(key = "conversation-end") {
+                if (activeSearchAnchor != null && state.conversationState.canLoadNewerMessages) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        TextButton(
+                            onClick = { ChatUiIntent.LoadNewerMessages.emit() },
+                            enabled = !state.conversationState.isLoadingNewerMessages
+                        ) {
+                            Text(stringResource(R.string.content_search_newer))
+                        }
+                        TextButton(onClick = { ChatUiIntent.ReturnToLatest.emit() }) {
+                            Text(stringResource(R.string.content_search_latest))
+                        }
+                    }
+                }
                 Spacer(modifier = Modifier.height(24.dp))
             }
         }
@@ -423,11 +492,10 @@ private fun CustomChatTopBar(
     onBack: () -> Unit,
     emit: ChatUiIntent.() -> Unit
 ) {
-    Surface(
+    PageSurface(kind = PageSurfaceKind.TopBar,
         modifier = Modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 1.dp,
-        border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.18f))
+        color = MaterialTheme.colorScheme.surface.copy(alpha = LocalPageTopBarOpacity.current),
+        tonalElevation = 1.dp * LocalPageTopBarOpacity.current,
     ) {
         Row(
             modifier = Modifier
@@ -541,16 +609,14 @@ private fun ConversationStartHeader(
     emit: ChatUiIntent.() -> Unit,
     modifier: Modifier = Modifier
 ) {
+    // 介绍卡和消息共用内容区背景，状态标签单独保证前景信息的可读性。
     val enabledLorebookCount = lorebookState.groups.sumOf { it.enabledCount }
-    Card(
+    PageSurface(kind = PageSurfaceKind.Bubble,
         modifier = modifier
             .fillMaxWidth()
             .padding(vertical = 12.dp, horizontal = 4.dp),
         shape = RoundedCornerShape(22.dp),
-        border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.20f)),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.30f)
-        )
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.30f * LocalPageBubbleOpacity.current)
     ) {
         Column(
             modifier = Modifier
@@ -586,24 +652,10 @@ private fun ConversationStartHeader(
 
             Spacer(modifier = Modifier.height(2.dp))
 
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                RpMetaPill(stringResource(R.string.messages_count, session.messageCount))
-                RpMetaPill(stringResource(R.string.world_books_enabled, enabledLorebookCount))
-                RpMetaPill(
-                    if (streamEnabled) stringResource(R.string.streaming_on)
-                    else stringResource(R.string.streaming_off)
-                )
-            }
-            OutlinedButton(
+            ConversationMetadata(session.messageCount, enabledLorebookCount, streamEnabled)
+            TextButton(
                 onClick = { ChatUiIntent.OpenCharacterEditor.emit() },
                 shape = RoundedCornerShape(12.dp),
-                border = BorderStroke(
-                    0.5.dp,
-                    MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
-                )
             ) {
                 Icon(Icons.Rounded.Edit, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(modifier = Modifier.width(8.dp))
@@ -708,7 +760,7 @@ private fun LorebookSearchField(
     onQueryChange: (String) -> Unit
 ) {
     OutlinedTextField(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().generalContentBackground(RoundedCornerShape(12.dp)),
         value = query,
         onValueChange = onQueryChange,
         placeholder = {
@@ -777,7 +829,7 @@ private fun MessageBubble(
             horizontalAlignment = if (isUser) Alignment.End else Alignment.Start,
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            Surface(
+            PageSurface(kind = PageSurfaceKind.Bubble,
                 modifier = Modifier
                     .widthIn(max = if (isUser) 310.dp else 295.dp)
                     .clickable(enabled = !editing) { showActions = !showActions },
@@ -799,23 +851,11 @@ private fun MessageBubble(
                     MessageRole.Narrator -> RoundedCornerShape(14.dp)
                 },
                 color = when (message.role) {
-                    MessageRole.User -> MaterialTheme.colorScheme.primary
-                    MessageRole.Assistant -> MaterialTheme.colorScheme.surface
-                    MessageRole.Narrator -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.50f)
+                    MessageRole.User -> MaterialTheme.colorScheme.primary.copy(alpha = LocalPageBubbleOpacity.current)
+                    MessageRole.Assistant -> MaterialTheme.colorScheme.surface.copy(alpha = LocalPageBubbleOpacity.current)
+                    MessageRole.Narrator -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.50f * LocalPageBubbleOpacity.current)
                 },
-                border = when (message.role) {
-                    MessageRole.User -> BorderStroke(0.5.dp, Color.White.copy(alpha = 0.15f))
-                    MessageRole.Assistant -> BorderStroke(
-                        0.5.dp,
-                        MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.22f)
-                    )
-
-                    MessageRole.Narrator -> BorderStroke(
-                        0.5.dp,
-                        MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.15f)
-                    )
-                },
-                shadowElevation = if (isUser) 1.5.dp else 0.5.dp
+                shadowElevation = (if (isUser) 1.5.dp else 0.5.dp) * LocalPageBubbleOpacity.current
             ) {
                 Column(
                     modifier = Modifier.padding(horizontal = 15.dp, vertical = 11.dp),
@@ -833,13 +873,13 @@ private fun MessageBubble(
                             text = message.speaker,
                             modifier = Modifier.weight(1f),
                             style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                            color = if (isUser) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
+                            color = if (isUser) pageUserBubbleContentColor() else MaterialTheme.colorScheme.onSurface
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
                             text = message.time,
                             style = MaterialTheme.typography.labelSmall,
-                            color = if (isUser) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.72f)
+                            color = if (isUser) pageUserBubbleContentColor().copy(alpha = 0.72f)
                             else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f)
                         )
                         if (canAddImages) {
@@ -855,7 +895,7 @@ private fun MessageBubble(
                     if (editing) imageState.errorResId?.let { errorResId ->
                         Text(
                             text = stringResource(errorResId),
-                            color = if (isUser) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.error,
+                            color = if (isUser) pageUserBubbleContentColor() else MaterialTheme.colorScheme.error,
                             style = MaterialTheme.typography.bodySmall
                         )
                     }
@@ -882,14 +922,10 @@ private fun MessageBubble(
                 enter = fadeIn() + expandVertically(),
                 exit = fadeOut() + shrinkVertically()
             ) {
-                Surface(
+                PageSurface(kind = PageSurfaceKind.Bubble,
                     shape = RoundedCornerShape(14.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.88f),
-                    border = BorderStroke(
-                        0.5.dp,
-                        MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f)
-                    ),
-                    shadowElevation = 2.dp,
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.88f * LocalPageBubbleOpacity.current),
+                    shadowElevation = 2.dp * LocalPageBubbleOpacity.current,
                     modifier = Modifier.padding(top = 2.dp)
                 ) {
                     Row(
@@ -984,13 +1020,13 @@ private fun MessageEditContent(
             maxLines = 8,
             shape = RoundedCornerShape(12.dp),
             colors = OutlinedTextFieldDefaults.colors(
-                focusedTextColor = if (isUser) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
-                unfocusedTextColor = if (isUser) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
-                cursorColor = if (isUser) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary,
-                focusedContainerColor = if (isUser) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.06f) else Color.Transparent,
-                unfocusedContainerColor = if (isUser) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.04f) else Color.Transparent,
-                focusedBorderColor = if (isUser) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.72f) else MaterialTheme.colorScheme.primary,
-                unfocusedBorderColor = if (isUser) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.42f) else MaterialTheme.colorScheme.outline
+                focusedTextColor = if (isUser) pageUserBubbleContentColor() else MaterialTheme.colorScheme.onSurface,
+                unfocusedTextColor = if (isUser) pageUserBubbleContentColor() else MaterialTheme.colorScheme.onSurface,
+                cursorColor = if (isUser) pageUserBubbleContentColor() else MaterialTheme.colorScheme.primary,
+                focusedContainerColor = if (isUser) pageUserBubbleContentColor().copy(alpha = 0.06f * LocalPageBubbleOpacity.current) else Color.Transparent,
+                unfocusedContainerColor = if (isUser) pageUserBubbleContentColor().copy(alpha = 0.04f * LocalPageBubbleOpacity.current) else Color.Transparent,
+                focusedBorderColor = if (isUser) pageUserBubbleContentColor().copy(alpha = 0.72f) else MaterialTheme.colorScheme.primary,
+                unfocusedBorderColor = if (isUser) pageUserBubbleContentColor().copy(alpha = 0.42f) else MaterialTheme.colorScheme.outline
             )
         )
         Row(
@@ -1004,7 +1040,7 @@ private fun MessageEditContent(
             ) {
                 Text(
                     stringResource(R.string.cancel),
-                    color = if (isUser) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.72f) else MaterialTheme.colorScheme.primary,
+                    color = if (isUser) pageUserBubbleContentColor().copy(alpha = 0.72f) else MaterialTheme.colorScheme.primary,
                     fontWeight = FontWeight.Normal
                 )
             }
@@ -1017,7 +1053,7 @@ private fun MessageEditContent(
                 Text(
                     stringResource(if (imageState.submitting) R.string.image_loading else R.string.save),
                     fontWeight = FontWeight.Bold,
-                    color = if (isUser) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary
+                    color = if (isUser) pageUserBubbleContentColor() else MaterialTheme.colorScheme.primary
                 )
             }
         }
@@ -1031,17 +1067,12 @@ private fun ThinkBlock(
     isThinking: Boolean,
     emit: ChatUiIntent.() -> Unit
 ) {
-    Surface(
+    AppSurface(
         modifier = Modifier
             .fillMaxWidth()
             .clickable { ChatUiIntent.ToggleThinkBlock(part.id).emit() },
         shape = RoundedCornerShape(14.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = if (isThinking) 0.55f else 0.38f),
-        border = BorderStroke(
-            0.8.dp,
-            if (isThinking) MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)
-            else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.20f)
-        )
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = (if (isThinking) 0.55f else 0.38f) * LocalPageBubbleOpacity.current),
     ) {
         Column(
             modifier = Modifier.padding(horizontal = 13.dp, vertical = 9.dp),
@@ -1105,21 +1136,13 @@ private fun QuickActionPill(
     onClick: () -> Unit
 ) {
     val hapticFeedback = LocalHapticFeedback.current
-    Surface(
+    AppSurface(
         shape = RoundedCornerShape(12.dp),
         color = if (enabled) {
-            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f)
+            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f * LocalPageBottomBarOpacity.current)
         } else {
-            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)
+            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f * LocalPageBottomBarOpacity.current)
         },
-        border = BorderStroke(
-            0.5.dp,
-            if (enabled) {
-                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f)
-            } else {
-                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.10f)
-            }
-        ),
         modifier = Modifier.clickable(
             enabled = enabled,
             onClick = {
@@ -1238,10 +1261,10 @@ private fun ChatInputBar(
         label = "sendButtonColor"
     )
 
-    Surface(
-        color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 2.dp,
-        shadowElevation = 3.dp
+    PageSurface(kind = PageSurfaceKind.BottomBar,
+        color = MaterialTheme.colorScheme.surface.copy(alpha = LocalPageBottomBarOpacity.current),
+        tonalElevation = 2.dp * LocalPageBottomBarOpacity.current,
+        shadowElevation = 3.dp * LocalPageBottomBarOpacity.current
     ) {
         Column(
             modifier = Modifier
@@ -1347,15 +1370,15 @@ private fun ChatInputBar(
                         focusedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.85f),
                         unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
                         disabledBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f),
-                        focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                        focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f * LocalPageBottomBarOpacity.current),
                         unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(
-                            alpha = 0.22f
+                            alpha = 0.22f * LocalPageBottomBarOpacity.current
                         )
                     ),
                     textStyle = MaterialTheme.typography.bodyMedium
                 )
                 Spacer(modifier = Modifier.width(8.dp))
-                Surface(
+                AppSurface(
                     modifier = Modifier.size(48.dp),
                     shape = CircleShape,
                     color = sendButtonColor,
@@ -1393,7 +1416,7 @@ private fun ChatSettingsPage(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
+            .background(pageCanvasColor())
     ) {
         AppTopBar(
             title = stringResource(R.string.chat_settings),
@@ -1594,7 +1617,7 @@ private fun SettingsSection(
     title: String,
     content: @Composable ColumnScope.() -> Unit
 ) {
-    Surface(
+    AppSurface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
         border = BorderStroke(
@@ -1789,7 +1812,7 @@ private fun MenuAction(
     enabled: Boolean = true,
     onClick: () -> Unit
 ) {
-    Surface(
+    AppSurface(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(enabled = enabled) { onClick() },
@@ -1949,7 +1972,7 @@ private fun AvatarPreview(
     modifier: Modifier = Modifier
 ) {
     val cornerRadius = remember(size) { (size * 0.28).coerceAtLeast(8.0).dp }
-    Surface(
+    AppSurface(
         modifier = modifier.size(size.dp),
         shape = RoundedCornerShape(cornerRadius),
         color = avatarColor.copy(alpha = 0.14f),

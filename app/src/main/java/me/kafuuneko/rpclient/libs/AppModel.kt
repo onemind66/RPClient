@@ -26,7 +26,7 @@ object AppModel : KotprefModel(), PromptPreferences {
     // 最后一个成功完成的业务升级步骤 versionCode；保留属性名以兼容既有偏好键。
     var lastMigratedVersionCode by intPref(default = 0, commitByDefault = true)
 
-    /** Render Story chapter Markdown as a themed preview by default. */
+    /** 开启后以主题化 Markdown 预览故事章节；默认保留原文编辑方式。 */
     var storyMarkdownRenderingEnabled by booleanPref(default = false, commitByDefault = true)
 
     // 最后一个成功清理旧存储的业务升级步骤 versionCode。
@@ -164,7 +164,12 @@ Treat it as an instruction, not as manuscript text. Do not quote, repeat, explai
     // 当前选中的模型配置 ID。
     var currentLLMProvider by longPref()
 
-    // 应用配色主题，使用 AppThemeMode.persistedValue 持久化。
+    // 对话框独立外观参数，不包含文件引用。
+    var dialogAppearance by stringPref(default = "")
+
+    // 配色与明暗模式分开保存，切换配色不改变用户的明暗偏好。
+    var themePalette by stringPref(default = "classic")
+
     var themeMode by stringPref(default = AppThemeMode.FollowSystem.persistedValue)
 
     // 摘要专用模型配置 ID；0 表示跟随当前全局模型配置。

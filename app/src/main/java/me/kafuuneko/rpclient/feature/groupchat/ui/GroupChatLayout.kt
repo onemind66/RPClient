@@ -32,6 +32,7 @@ import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -51,27 +52,17 @@ import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Groups
-import androidx.compose.material.icons.rounded.Image as ImageIcon
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.KeyboardArrowUp
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Stop
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -84,8 +75,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -99,7 +93,9 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
@@ -107,10 +103,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
 import me.kafuuneko.rpclient.R
-import me.kafuuneko.rpclient.libs.media.MessageImageAction
-import me.kafuuneko.rpclient.libs.media.MessageImageState
+import me.kafuuneko.rpclient.feature.appearance.presentation.PageBackgroundUiState
 import me.kafuuneko.rpclient.feature.groupchat.model.GroupChatGenerationState
 import me.kafuuneko.rpclient.feature.groupchat.model.GroupChatMemberItem
 import me.kafuuneko.rpclient.feature.groupchat.model.GroupChatMessageItem
@@ -121,14 +117,18 @@ import me.kafuuneko.rpclient.feature.groupchat.presentation.GroupChatPage
 import me.kafuuneko.rpclient.feature.groupchat.presentation.GroupChatSettingsState
 import me.kafuuneko.rpclient.feature.groupchat.presentation.GroupChatUiIntent
 import me.kafuuneko.rpclient.feature.groupchat.presentation.GroupChatUiState
+import me.kafuuneko.rpclient.libs.appearance.PageSurfaceKind
 import me.kafuuneko.rpclient.libs.core.ActivityPreview
 import me.kafuuneko.rpclient.libs.groupchat.model.GroupChatActivationStrategy
 import me.kafuuneko.rpclient.libs.groupchat.model.GroupChatCharacterCardMode
 import me.kafuuneko.rpclient.libs.groupchat.model.GroupChatLorebookGroupItem
 import me.kafuuneko.rpclient.libs.groupchat.model.GroupChatMessageSource
+import me.kafuuneko.rpclient.libs.media.MessageImageAction
+import me.kafuuneko.rpclient.libs.media.MessageImageState
 import me.kafuuneko.rpclient.model.MessageContentPart
 import me.kafuuneko.rpclient.ui.dialog.AppConfirmDialog
 import me.kafuuneko.rpclient.ui.dialog.AppDangerDialog
+import me.kafuuneko.rpclient.ui.dialog.MessageImageViewerDialog
 import me.kafuuneko.rpclient.ui.dialog.PromptInspectorDialog
 import me.kafuuneko.rpclient.ui.dialog.SessionLorebookDialog
 import me.kafuuneko.rpclient.ui.dialog.SessionLorebookDialogEntry
@@ -136,17 +136,30 @@ import me.kafuuneko.rpclient.ui.dialog.SessionLorebookDialogGroup
 import me.kafuuneko.rpclient.ui.message.DraftAttachmentTray
 import me.kafuuneko.rpclient.ui.message.MessageImageEditButton
 import me.kafuuneko.rpclient.ui.message.MessageImageGallery
-import me.kafuuneko.rpclient.ui.dialog.MessageImageViewerDialog
 import me.kafuuneko.rpclient.ui.theme.getMacaronColor
+import me.kafuuneko.rpclient.ui.widgets.AppPageScaffold
+import me.kafuuneko.rpclient.ui.widgets.AppSurface
 import me.kafuuneko.rpclient.ui.widgets.AppTopBar
+import me.kafuuneko.rpclient.ui.widgets.LocalPageBottomBarOpacity
+import me.kafuuneko.rpclient.ui.widgets.LocalPageBubbleOpacity
+import me.kafuuneko.rpclient.ui.widgets.LocalPageTopBarOpacity
 import me.kafuuneko.rpclient.ui.widgets.MarkdownMessageText
 import me.kafuuneko.rpclient.ui.widgets.NoProviderBanner
+import me.kafuuneko.rpclient.ui.widgets.PageBackdrop
+import me.kafuuneko.rpclient.ui.widgets.PageSurface
 import me.kafuuneko.rpclient.ui.widgets.RpAvatar
 import me.kafuuneko.rpclient.ui.widgets.RpLazyColumn
 import me.kafuuneko.rpclient.ui.widgets.RpScrollableOutlinedTextField
 import me.kafuuneko.rpclient.ui.widgets.RpSectionHeader
 import me.kafuuneko.rpclient.ui.widgets.draggableLazyListScrollIndicator
 import me.kafuuneko.rpclient.ui.widgets.groupchat.GroupChatLorebookSelector
+import me.kafuuneko.rpclient.ui.widgets.pageCanvasColor
+import me.kafuuneko.rpclient.ui.widgets.pageSurfaceBlur
+import me.kafuuneko.rpclient.ui.widgets.pageUserBubbleContentColor
+import androidx.compose.material.icons.rounded.Image as ImageIcon
+import me.kafuuneko.rpclient.ui.widgets.PageButton as Button
+import me.kafuuneko.rpclient.ui.widgets.PageFilterChip as FilterChip
+import me.kafuuneko.rpclient.ui.widgets.PageSwitch as Switch
 
 /** 当前窗口顶部进入该范围时预取更早消息。 */
 private const val HISTORY_LOAD_THRESHOLD = 4
@@ -155,6 +168,7 @@ private const val HISTORY_LOAD_THRESHOLD = 4
 @Composable
 fun GroupChatLayout(
     uiState: GroupChatUiState,
+    background: PageBackgroundUiState = PageBackgroundUiState(),
     emitIntent: (GroupChatUiIntent) -> Unit = {}
 ) {
     BackHandler(enabled = uiState is GroupChatUiState.Normal) {
@@ -162,9 +176,23 @@ fun GroupChatLayout(
     }
     when (uiState) {
         GroupChatUiState.None -> Unit
-        is GroupChatUiState.Finished -> GroupChatLayout(uiState.previous) {}
+        is GroupChatUiState.Finished -> GroupChatLayout(uiState.previous, background) {}
         is GroupChatUiState.Normal -> {
-            GroupChatNormalView(uiState, emitIntent)
+            // 页面切换只卸载视图，保留会话和设置各自的列表位置。
+            val pageStateHolder = rememberSaveableStateHolder()
+            // 群聊设置与会话使用相同背景，不能落回 Activity 的通用背景。
+            PageBackdrop(
+                background,
+                useContainerAppearance = uiState.page == GroupChatPage.Settings
+            ) {
+                pageStateHolder.SaveableStateProvider("${uiState.sessionId}:${uiState.page.name}") {
+                    if (uiState.page == GroupChatPage.Settings) {
+                        GroupChatSettingsView(uiState.settingsState, uiState.members, emitIntent)
+                    } else {
+                        GroupChatNormalView(uiState, emitIntent)
+                    }
+                }
+            }
             DialogSwitch(uiState, emitIntent)
             LoadStateOverlay(uiState.loadState)
         }
@@ -176,54 +204,21 @@ private fun GroupChatNormalView(
     state: GroupChatUiState.Normal,
     emitIntent: (GroupChatUiIntent) -> Unit
 ) {
-    if (state.page == GroupChatPage.Settings) {
-        GroupChatSettingsView(state.settingsState, state.members, emitIntent)
-        return
-    }
     val generating = state.conversationState.generationState is GroupChatGenerationState.Generating
     val canContinue = state.conversationState.hasCharacterMessage
-    Scaffold(
+    AppPageScaffold(
+        containerColor = Color.Transparent,
         topBar = {
-            AppTopBar(
+            CustomGroupChatTopBar(
                 title = state.title,
+                strategy = state.activeActivationStrategy,
+                generationState = state.conversationState.generationState,
+                hasAvailableProvider = state.hasAvailableProvider,
+                hasPromptInspection = state.hasPromptInspection,
+                sessionLoreDialogVisible = state.dialogState is GroupChatDialogState.SessionLorebook,
+                generating = generating,
                 onBack = { emitIntent(GroupChatUiIntent.Back) },
-                actions = {
-                    IconButton(
-                        onClick = { emitIntent(GroupChatUiIntent.OpenPromptInspector) },
-                        enabled = state.hasPromptInspection
-                    ) {
-                        Icon(
-                            Icons.Rounded.Info,
-                            contentDescription = stringResource(R.string.prompt_inspector_title)
-                        )
-                    }
-                    IconButton(
-                        onClick = {
-                            emitIntent(GroupChatUiIntent.ShowSessionLoreDialog)
-                        }
-                    ) {
-                        Icon(
-                            Icons.Rounded.Book,
-                            contentDescription = stringResource(R.string.session_world_books),
-                            tint = if (
-                                state.dialogState is GroupChatDialogState.SessionLorebook
-                            ) {
-                                MaterialTheme.colorScheme.primary
-                            } else {
-                                MaterialTheme.colorScheme.onSurface
-                            }
-                        )
-                    }
-                    IconButton(
-                        onClick = { emitIntent(GroupChatUiIntent.OpenSettings) },
-                        enabled = !generating
-                    ) {
-                        Icon(
-                            Icons.Rounded.Settings,
-                            contentDescription = stringResource(R.string.settings)
-                        )
-                    }
-                }
+                emitIntent = emitIntent
             )
         },
         bottomBar = {
@@ -236,7 +231,13 @@ private fun GroupChatNormalView(
                         Text(stringResource(R.string.image_retry))
                     }
                 }
-                MessageImageViewerDialog(state.imageState) { emitIntent(GroupChatUiIntent.ImageAction(it)) }
+                MessageImageViewerDialog(state.imageState) {
+                    emitIntent(
+                        GroupChatUiIntent.ImageAction(
+                            it
+                        )
+                    )
+                }
                 Composer(
                     draft = state.conversationState.inputDraft,
                     generating = generating,
@@ -264,13 +265,6 @@ private fun GroupChatNormalView(
                     onClick = { emitIntent(GroupChatUiIntent.OpenProviderSettings) }
                 )
             }
-            GroupHeader(
-                strategy = state.activeActivationStrategy,
-                generationState = state.conversationState.generationState,
-                canContinue = canContinue,
-                hasAvailableProvider = state.hasAvailableProvider,
-                onContinue = { emitIntent(GroupChatUiIntent.ContinueLast) }
-            )
             MemberRail(
                 members = state.members,
                 selectedSpeakerId = state.conversationState.selectedSpeakerId,
@@ -287,6 +281,9 @@ private fun GroupChatNormalView(
                 messages = state.conversationState.messages,
                 canLoadOlderMessages = state.conversationState.canLoadOlderMessages,
                 isLoadingOlderMessages = state.conversationState.isLoadingOlderMessages,
+                searchAnchorMessageId = state.conversationState.searchAnchorMessageId,
+                canLoadNewerMessages = state.conversationState.canLoadNewerMessages,
+                isLoadingNewerMessages = state.conversationState.isLoadingNewerMessages,
                 expandedThinkBlockIds = state.conversationState.expandedThinkBlockIds,
                 editingMessageId = state.conversationState.editingMessageId,
                 editingMessageDraft = state.conversationState.editingMessageDraft,
@@ -307,7 +304,7 @@ private fun GroupChatSettingsView(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
+            .background(pageCanvasColor())
     ) {
         AppTopBar(
             title = stringResource(R.string.group_chat_settings),
@@ -584,7 +581,7 @@ private fun GroupSettingsSection(
     title: String,
     content: @Composable ColumnScope.() -> Unit
 ) {
-    Surface(
+    AppSurface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
         border = BorderStroke(
@@ -612,7 +609,7 @@ private fun SettingsActionRow(
     iconTint: Color = MaterialTheme.colorScheme.primary,
     onClick: () -> Unit
 ) {
-    Surface(
+    AppSurface(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick),
@@ -868,7 +865,7 @@ private fun GroupMemberSettingsRow(
     onMoveDown: () -> Unit,
     onRemove: () -> Unit
 ) {
-    Surface(
+    AppSurface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
@@ -880,7 +877,8 @@ private fun GroupMemberSettingsRow(
             RpAvatar(
                 text = member.name.take(1),
                 color = getMacaronColor(member.name),
-                modifier = Modifier.size(38.dp)
+                modifier = Modifier.size(38.dp),
+                image = member.avatarImage
             )
             Text(
                 text = member.name,
@@ -934,78 +932,149 @@ private fun SettingsSwitch(
     }
 }
 
+/**
+ * 群聊专用顶部栏。
+ * - 整合返回导航、群聊标题、发言顺序策略与生成状态描述。
+ * - 生成过程中在副标题旁展示微型进度指示。
+ * - 右侧保留 Prompt 检查、会话世界书与设置入口。
+ */
 @Composable
-private fun GroupHeader(
+private fun CustomGroupChatTopBar(
+    title: String,
     strategy: GroupChatActivationStrategy,
     generationState: GroupChatGenerationState,
-    canContinue: Boolean,
-    hasAvailableProvider: Boolean = true,
-    onContinue: () -> Unit
+    hasAvailableProvider: Boolean,
+    hasPromptInspection: Boolean,
+    sessionLoreDialogVisible: Boolean,
+    generating: Boolean,
+    onBack: () -> Unit,
+    emitIntent: (GroupChatUiIntent) -> Unit
 ) {
-    Surface(
-        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+    val strategyText = stringResource(
+        R.string.group_chat_turn_order,
+        stringResource(strategy.titleRes())
+    )
+    val statusText = when (generationState) {
+        GroupChatGenerationState.Idle ->
+            if (!hasAvailableProvider) stringResource(R.string.no_model_configured)
+            else stringResource(R.string.group_chat_cast_ready)
+
+        is GroupChatGenerationState.Generating ->
+            stringResource(
+                R.string.group_chat_speaker_replying,
+                generationState.speakerName,
+                generationState.current,
+                generationState.total
+            )
+
+        is GroupChatGenerationState.Failed -> generationState.message
+    }
+
+    // 采用与单聊一致的顶部底板与毛玻璃样式。
+    PageSurface(
+        kind = PageSurfaceKind.TopBar,
+        modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = LocalPageTopBarOpacity.current),
+        tonalElevation = 1.dp * LocalPageTopBarOpacity.current
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 18.dp, vertical = 10.dp),
+                .statusBarsPadding()
+                .windowInsetsPadding(
+                    WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal)
+                )
+                .padding(horizontal = 6.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(
-                Icons.Rounded.Groups,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary
-            )
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .padding(horizontal = 10.dp)
+            // 返回上一页入口。
+            IconButton(
+                onClick = onBack,
+                modifier = Modifier.size(38.dp)
             ) {
-                Text(
-                    text = stringResource(
-                        R.string.group_chat_turn_order,
-                        stringResource(strategy.titleRes())
-                    ),
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.Bold
-                )
-                Text(
-                    text = when (generationState) {
-                        GroupChatGenerationState.Idle ->
-                            if (!hasAvailableProvider) stringResource(R.string.no_model_configured) else stringResource(
-                                R.string.group_chat_cast_ready
-                            )
-
-                        is GroupChatGenerationState.Generating ->
-                            stringResource(
-                                R.string.group_chat_speaker_replying,
-                                generationState.speakerName,
-                                generationState.current,
-                                generationState.total
-                            )
-
-                        is GroupChatGenerationState.Failed -> generationState.message
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                Icon(
+                    painter = painterResource(R.drawable.ic_back),
+                    contentDescription = stringResource(R.string.back),
+                    modifier = Modifier.size(22.dp),
+                    tint = MaterialTheme.colorScheme.onSurface
                 )
             }
-            if (generationState is GroupChatGenerationState.Generating) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(20.dp),
-                    strokeWidth = 2.dp
+
+            Spacer(modifier = Modifier.width(6.dp))
+
+            // 群聊标题与副状态（发言策略与当前状态合一）。
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    color = MaterialTheme.colorScheme.onSurface
                 )
-            } else if (canContinue) {
-                TextButton(onClick = onContinue) {
-                    Text(stringResource(R.string.continue_latest_reply))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text(
+                        text = "$strategyText • $statusText",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                    if (generationState is GroupChatGenerationState.Generating) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(12.dp),
+                            strokeWidth = 1.5.dp
+                        )
+                    }
                 }
+            }
+
+            // 顶部操作区：Prompt 检查、会话世界书与群设置。
+            IconButton(
+                onClick = { emitIntent(GroupChatUiIntent.OpenPromptInspector) },
+                enabled = hasPromptInspection,
+                modifier = Modifier.size(38.dp)
+            ) {
+                Icon(
+                    Icons.Rounded.Info,
+                    contentDescription = stringResource(R.string.prompt_inspector_title),
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+            IconButton(
+                onClick = { emitIntent(GroupChatUiIntent.ShowSessionLoreDialog) },
+                modifier = Modifier.size(38.dp)
+            ) {
+                Icon(
+                    Icons.Rounded.Book,
+                    contentDescription = stringResource(R.string.session_world_books),
+                    modifier = Modifier.size(20.dp),
+                    tint = if (sessionLoreDialogVisible) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurface
+                    }
+                )
+            }
+            IconButton(
+                onClick = { emitIntent(GroupChatUiIntent.OpenSettings) },
+                enabled = !generating,
+                modifier = Modifier.size(38.dp)
+            ) {
+                Icon(
+                    Icons.Rounded.Settings,
+                    contentDescription = stringResource(R.string.settings),
+                    modifier = Modifier.size(20.dp)
+                )
             }
         }
     }
 }
 
+/** 单行横向滚动的轻量成员轨，横屏下自然平铺展开。 */
 @Composable
 private fun MemberRail(
     members: List<GroupChatMemberItem>,
@@ -1018,8 +1087,9 @@ private fun MemberRail(
         modifier = Modifier
             .fillMaxWidth()
             .horizontalScroll(rememberScrollState())
-            .padding(horizontal = 14.dp, vertical = 12.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
+            .padding(horizontal = 12.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
         members.forEach { member ->
             MemberChip(
@@ -1033,6 +1103,7 @@ private fun MemberRail(
     }
 }
 
+/** 紧凑型成员芯片，支持指定发言人高亮与快速静音切换。 */
 @Composable
 private fun MemberChip(
     member: GroupChatMemberItem,
@@ -1043,9 +1114,12 @@ private fun MemberChip(
 ) {
     val hapticFeedback = LocalHapticFeedback.current
     val accent = getMacaronColor(member.name)
-    Card(
+    val shape = RoundedCornerShape(14.dp)
+
+    // 底板随选定与静音状态切换对比度；采用修饰符点击避免 Material Surface 强制扩展 48dp 最小交互区域引起上下多余模糊。
+    AppSurface(
         modifier = Modifier
-            .width(138.dp)
+            .pageSurfaceBlur(PageSurfaceKind.Bubble, shape)
             .alpha(if (member.muted) 0.55f else 1f)
             .clickable(
                 enabled = enabled,
@@ -1054,48 +1128,54 @@ private fun MemberChip(
                     onSelect()
                 }
             ),
-        shape = RoundedCornerShape(16.dp),
-        border = BorderStroke(
-            if (selected) 1.5.dp else 1.dp,
-            if (selected) {
-                MaterialTheme.colorScheme.primary
-            } else {
-                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.28f)
-            }
+        shape = shape,
+        border = if (selected) BorderStroke(
+            1.5.dp,
+            MaterialTheme.colorScheme.primary.copy(alpha = LocalPageBubbleOpacity.current)
+        ) else BorderStroke(
+            0.5.dp,
+            MaterialTheme.colorScheme.outline.copy(alpha = 0.25f * LocalPageBubbleOpacity.current)
         ),
-        colors = CardDefaults.cardColors(
-            containerColor = if (selected) {
-                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
-            } else {
-                MaterialTheme.colorScheme.surface
-            }
-        )
+        color = if (selected) {
+            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f * LocalPageBubbleOpacity.current)
+        } else {
+            MaterialTheme.colorScheme.surface.copy(alpha = 0.85f * LocalPageBubbleOpacity.current)
+        }
     ) {
         Row(
-            modifier = Modifier.padding(10.dp),
-            verticalAlignment = Alignment.CenterVertically
+            modifier = Modifier.padding(start = 6.dp, end = 6.dp, top = 3.dp, bottom = 3.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
+            // 成员头像
             RpAvatar(
                 text = member.name.firstOrNull()?.uppercase() ?: "?",
                 color = accent,
-                modifier = Modifier.size(38.dp)
+                modifier = Modifier.size(22.dp),
+                image = member.avatarImage
             )
+            // 成员名称
             Text(
                 text = member.name,
-                modifier = Modifier
-                    .weight(1f)
-                    .padding(start = 8.dp),
-                style = MaterialTheme.typography.labelLarge,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
-            IconButton(
-                onClick = {
-                    hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
-                    onToggleMuted()
-                },
-                enabled = enabled,
-                modifier = Modifier.size(28.dp)
+            // 静音状态轻量切换按钮，避免使用默认 48dp 交互区域的 IconButton 撑大芯片上下边距产生空余模糊底板
+            Box(
+                modifier = Modifier
+                    .size(20.dp)
+                    .clip(CircleShape)
+                    .clickable(
+                        enabled = enabled,
+                        role = Role.Button,
+                        onClick = {
+                            hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onToggleMuted()
+                        }
+                    ),
+                contentAlignment = Alignment.Center
             ) {
                 Icon(
                     imageVector = if (member.muted) {
@@ -1106,7 +1186,12 @@ private fun MemberChip(
                     contentDescription = stringResource(
                         if (member.muted) R.string.unmute else R.string.mute
                     ),
-                    modifier = Modifier.size(17.dp)
+                    modifier = Modifier.size(13.dp),
+                    tint = if (member.muted) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
+                    }
                 )
             }
         }
@@ -1120,37 +1205,67 @@ private fun MessageList(
     messages: List<GroupChatMessageItem>,
     canLoadOlderMessages: Boolean,
     isLoadingOlderMessages: Boolean,
+    searchAnchorMessageId: Long?,
+    canLoadNewerMessages: Boolean,
+    isLoadingNewerMessages: Boolean,
     expandedThinkBlockIds: Set<String>,
     editingMessageId: Long?,
     editingMessageDraft: String,
     emitIntent: (GroupChatUiIntent) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val activeSearchAnchor by rememberUpdatedState(searchAnchorMessageId)
     val listState = rememberLazyListState()
     val isListDragged by listState.interactionSource.collectIsDraggedAsState()
     val latestCanLoadOlderMessages by rememberUpdatedState(canLoadOlderMessages)
     val latestIsLoadingOlderMessages by rememberUpdatedState(isLoadingOlderMessages)
-    var shouldFollowBottom by remember { mutableStateOf(true) }
-    var isFirstLoad by remember { mutableStateOf(true) }
+    // 与列表位置一起恢复，返回设置前的历史阅读位置不应被首次定位或流式跟随覆盖。
+    var shouldFollowBottom by rememberSaveable { mutableStateOf(true) }
+    var isFirstLoad by rememberSaveable { mutableStateOf(true) }
     var isScrollIndicatorDragged by remember { mutableStateOf(false) }
-    var lastTailMessageId by remember { mutableStateOf<Long?>(null) }
+    var lastTailMessageId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var lastSearchAnchor by rememberSaveable { mutableStateOf<Long?>(null) }
 
     LaunchedEffect(listState) {
-        snapshotFlow { listState.canScrollForward to isScrollIndicatorDragged }
-            .collect { (canScrollForward, indicatorDragged) ->
-                if (indicatorDragged) {
-                    shouldFollowBottom = false
-                } else if (!canScrollForward) {
-                    shouldFollowBottom = true
-                }
+        // 恢复列表尚未完成测量时 canScrollForward 暂为 false，不能据此重新开启底部跟随。
+        snapshotFlow {
+            if (listState.layoutInfo.visibleItemsInfo.isEmpty()) null
+            else listState.canScrollForward to isScrollIndicatorDragged
+        }.collect { position ->
+            val (canScrollForward, indicatorDragged) = position ?: return@collect
+            if (indicatorDragged) {
+                shouldFollowBottom = false
+            } else if (activeSearchAnchor == null && !canScrollForward) {
+                shouldFollowBottom = true
             }
+        }
     }
     LaunchedEffect(isListDragged) {
         if (isListDragged) {
             snapshotFlow { listState.canScrollForward }
                 .collect { canScrollForward ->
-                    shouldFollowBottom = !canScrollForward
+                    shouldFollowBottom = activeSearchAnchor == null && !canScrollForward
                 }
+        }
+    }
+
+    val currentMessages by rememberUpdatedState(messages)
+    val latestCanLoadNewerMessages by rememberUpdatedState(canLoadNewerMessages)
+    val latestIsLoadingNewerMessages by rememberUpdatedState(isLoadingNewerMessages)
+    LaunchedEffect(listState) {
+        // 页头加载项也计入布局数量，防止分页后旧测量结果提前结束历史定位。
+        snapshotFlow {
+            val headerCount =
+                if (latestCanLoadOlderMessages || latestIsLoadingOlderMessages) 1 else 0
+            val layout = listState.layoutInfo
+            currentMessages.lastOrNull()?.id?.takeIf {
+                !isFirstLoad && activeSearchAnchor != null &&
+                        !latestCanLoadNewerMessages && !latestIsLoadingNewerMessages &&
+                        layout.totalItemsCount == currentMessages.size + headerCount + 1 &&
+                        layout.visibleItemsInfo.isNotEmpty() && !listState.canScrollForward
+            }
+        }.filterNotNull().distinctUntilChanged().collect { messageId ->
+            emitIntent(GroupChatUiIntent.ReachLatestMessage(messageId))
         }
     }
 
@@ -1171,18 +1286,24 @@ private fun MessageList(
 
     // 只有尾部消息身份改变时才滚到底部，头部加载历史不会打断用户位置
     val tailMessageId = messages.lastOrNull()?.id
-    LaunchedEffect(tailMessageId) {
-        if (tailMessageId == null) {
-            lastTailMessageId = null
+    LaunchedEffect(tailMessageId, activeSearchAnchor) {
+        if (activeSearchAnchor != null) {
+            // 只在首次进入定位窗口时滚动，继续分页和流式刷新保持阅读位置。
+            if (isFirstLoad) {
+                val targetIndex = messages.indexOfFirst { it.id == activeSearchAnchor }
+                if (targetIndex >= 0) listState.scrollToItem(targetIndex + (if (canLoadOlderMessages || isLoadingOlderMessages) 1 else 0))
+                isFirstLoad = false
+            }
+            shouldFollowBottom = false
+        } else if (tailMessageId == null) {
             isFirstLoad = true
-        } else if (isFirstLoad || tailMessageId != lastTailMessageId) {
+        } else if (isFirstLoad || tailMessageId != lastTailMessageId || lastSearchAnchor != null) {
             shouldFollowBottom = true
-            listState.scrollToItem(
-                messages.size + if (canLoadOlderMessages || isLoadingOlderMessages) 1 else 0
-            )
+            listState.scrollToItem(messages.size + (if (canLoadOlderMessages || isLoadingOlderMessages) 1 else 0))
             isFirstLoad = false
         }
         lastTailMessageId = tailMessageId
+        lastSearchAnchor = activeSearchAnchor
     }
 
     // - 内容流式生成或思考块折叠变动时，若处于跟随状态则自动跟随到底部
@@ -1191,7 +1312,7 @@ private fun MessageList(
         expandedThinkBlockIds
     ) {
         if (messages.isNotEmpty()) {
-            if (isFirstLoad || shouldFollowBottom) {
+            if (activeSearchAnchor == null && (isFirstLoad || shouldFollowBottom)) {
                 listState.scrollToItem(
                     messages.size + if (canLoadOlderMessages || isLoadingOlderMessages) 1 else 0
                 )
@@ -1213,9 +1334,11 @@ private fun MessageList(
             .fillMaxWidth()
             .onSizeChanged { size ->
                 val newHeight = size.height
-                if (previousListHeight > 0 && newHeight > 0 && newHeight != previousListHeight) {
+                if (activeSearchAnchor == null && previousListHeight > 0 && newHeight > 0 && newHeight != previousListHeight) {
                     val delta = (previousListHeight - newHeight).toFloat()
                     coroutineScope.launch {
+                        // 尺寸回调仍处于测量阶段，下一帧再滚动以免重入布局。
+                        withFrameNanos { }
                         if (shouldFollowBottom && delta > 0) {
                             listState.scrollToItem(
                                 messages.size + if (canLoadOlderMessages || isLoadingOlderMessages) 1 else 0
@@ -1267,6 +1390,22 @@ private fun MessageList(
             )
         }
         item(key = "conversation-end") {
+            if (activeSearchAnchor != null && canLoadNewerMessages) {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    TextButton(
+                        onClick = { emitIntent(GroupChatUiIntent.LoadNewerMessages) },
+                        enabled = !isLoadingNewerMessages
+                    ) {
+                        Text(stringResource(R.string.content_search_newer))
+                    }
+                    TextButton(onClick = { emitIntent(GroupChatUiIntent.ReturnToLatest) }) {
+                        Text(stringResource(R.string.content_search_latest))
+                    }
+                }
+            }
             Spacer(modifier = Modifier.height(24.dp))
         }
     }
@@ -1299,7 +1438,7 @@ private fun EmptyConversation(modifier: Modifier) {
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Surface(
+            AppSurface(
                 modifier = Modifier.size(64.dp),
                 shape = RoundedCornerShape(20.dp),
                 color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
@@ -1394,7 +1533,8 @@ private fun MessageBubble(
                     MessageImageEditButton(imageState) { emitIntent(GroupChatUiIntent.ImageAction(it)) }
                 }
             }
-            Surface(
+            PageSurface(
+                kind = PageSurfaceKind.Bubble,
                 modifier = Modifier
                     .padding(top = 5.dp)
                     .clickable(enabled = !editing) {
@@ -1417,23 +1557,11 @@ private fun MessageBubble(
                     )
                 },
                 color = when {
-                    isUser -> MaterialTheme.colorScheme.primary
-                    isSystem -> MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.4f)
-                    else -> MaterialTheme.colorScheme.surface
+                    isUser -> MaterialTheme.colorScheme.primary.copy(alpha = LocalPageBubbleOpacity.current)
+                    isSystem -> MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.4f * LocalPageBubbleOpacity.current)
+                    else -> MaterialTheme.colorScheme.surface.copy(alpha = LocalPageBubbleOpacity.current)
                 },
-                border = when {
-                    isUser -> BorderStroke(0.5.dp, Color.White.copy(alpha = 0.15f))
-                    isSystem -> BorderStroke(
-                        0.5.dp,
-                        MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.15f)
-                    )
-
-                    else -> BorderStroke(
-                        0.5.dp,
-                        MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.22f)
-                    )
-                },
-                shadowElevation = if (isUser) 1.5.dp else 0.5.dp
+                shadowElevation = (if (isUser) 1.5.dp else 0.5.dp) * LocalPageBubbleOpacity.current
             ) {
                 Column(
                     modifier = Modifier.padding(horizontal = 15.dp, vertical = 11.dp),
@@ -1446,7 +1574,7 @@ private fun MessageBubble(
                     if (editing) imageState.errorResId?.let { errorResId ->
                         Text(
                             text = stringResource(errorResId),
-                            color = if (isUser) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.error,
+                            color = if (isUser) pageUserBubbleContentColor() else MaterialTheme.colorScheme.error,
                             style = MaterialTheme.typography.bodySmall
                         )
                     }
@@ -1471,13 +1599,9 @@ private fun MessageBubble(
                         enter = fadeIn() + expandVertically(),
                         exit = fadeOut() + shrinkVertically()
                     ) {
-                        Surface(
+                        AppSurface(
                             shape = RoundedCornerShape(12.dp),
-                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.88f),
-                            border = BorderStroke(
-                                0.5.dp,
-                                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f)
-                            ),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.88f * LocalPageBubbleOpacity.current),
                             modifier = Modifier.padding(top = 2.dp)
                         ) {
                             Row(modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)) {
@@ -1568,13 +1692,12 @@ private fun GroupThinkBlock(
     indicatorColor: Color,
     onToggle: () -> Unit
 ) {
-    Surface(
+    AppSurface(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onToggle),
         shape = RoundedCornerShape(12.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f * LocalPageBubbleOpacity.current),
     ) {
         Column(
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
@@ -1651,27 +1774,27 @@ private fun GroupMessageEditContent(
             shape = RoundedCornerShape(12.dp),
             colors = OutlinedTextFieldDefaults.colors(
                 focusedTextColor = if (isUser) {
-                    MaterialTheme.colorScheme.onPrimary
+                    pageUserBubbleContentColor()
                 } else {
                     MaterialTheme.colorScheme.onSurface
                 },
                 unfocusedTextColor = if (isUser) {
-                    MaterialTheme.colorScheme.onPrimary
+                    pageUserBubbleContentColor()
                 } else {
                     MaterialTheme.colorScheme.onSurface
                 },
                 cursorColor = if (isUser) {
-                    MaterialTheme.colorScheme.onPrimary
+                    pageUserBubbleContentColor()
                 } else {
                     MaterialTheme.colorScheme.primary
                 },
                 focusedBorderColor = if (isUser) {
-                    MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.72f)
+                    pageUserBubbleContentColor().copy(alpha = 0.72f)
                 } else {
                     MaterialTheme.colorScheme.primary
                 },
                 unfocusedBorderColor = if (isUser) {
-                    MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.42f)
+                    pageUserBubbleContentColor().copy(alpha = 0.42f)
                 } else {
                     MaterialTheme.colorScheme.outline
                 }
@@ -1689,7 +1812,7 @@ private fun GroupMessageEditContent(
                 Text(
                     text = stringResource(R.string.cancel),
                     color = if (isUser) {
-                        MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f)
+                        pageUserBubbleContentColor().copy(alpha = 0.85f)
                     } else {
                         MaterialTheme.colorScheme.primary
                     }
@@ -1705,7 +1828,7 @@ private fun GroupMessageEditContent(
                     text = stringResource(if (imageState.submitting) R.string.image_loading else R.string.save),
                     fontWeight = FontWeight.Bold,
                     color = if (isUser) {
-                        MaterialTheme.colorScheme.onPrimary
+                        pageUserBubbleContentColor()
                     } else {
                         MaterialTheme.colorScheme.primary
                     }
@@ -1723,7 +1846,7 @@ private fun GroupMessageActions(
     emitIntent: (GroupChatUiIntent) -> Unit
 ) {
     val iconColor = if (isUser) {
-        MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f)
+        pageUserBubbleContentColor().copy(alpha = 0.85f)
     } else {
         MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
     }
@@ -1734,13 +1857,13 @@ private fun GroupMessageActions(
             .clickable(onClick = onClick)
             .padding(6.dp)
     }
-    Surface(
+    AppSurface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
         color = if (isUser) {
-            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.2f)
+            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.2f * LocalPageBubbleOpacity.current)
         } else {
-            MaterialTheme.colorScheme.surface.copy(alpha = 0.55f)
+            MaterialTheme.colorScheme.surface.copy(alpha = 0.55f * LocalPageBubbleOpacity.current)
         }
     ) {
         Row(
@@ -1793,21 +1916,13 @@ private fun QuickActionPill(
     onClick: () -> Unit
 ) {
     val hapticFeedback = LocalHapticFeedback.current
-    Surface(
+    AppSurface(
         shape = RoundedCornerShape(12.dp),
         color = if (enabled) {
-            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f)
+            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f * LocalPageBottomBarOpacity.current)
         } else {
-            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)
+            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f * LocalPageBottomBarOpacity.current)
         },
-        border = BorderStroke(
-            0.5.dp,
-            if (enabled) {
-                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f)
-            } else {
-                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.10f)
-            }
-        ),
         modifier = Modifier.clickable(
             enabled = enabled,
             onClick = {
@@ -1817,9 +1932,9 @@ private fun QuickActionPill(
         )
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(5.dp)
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             Icon(
                 imageVector = icon,
@@ -1827,7 +1942,7 @@ private fun QuickActionPill(
                 tint = if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(
                     alpha = 0.38f
                 ),
-                modifier = Modifier.size(14.dp)
+                modifier = Modifier.size(13.dp)
             )
             Text(
                 text = label,
@@ -1859,10 +1974,11 @@ private fun Composer(
         label = "sendButtonColor"
     )
 
-    Surface(
-        tonalElevation = 5.dp,
-        shadowElevation = 8.dp,
-        color = MaterialTheme.colorScheme.surface
+    PageSurface(
+        kind = PageSurfaceKind.BottomBar,
+        tonalElevation = 5.dp * LocalPageBottomBarOpacity.current,
+        shadowElevation = 8.dp * LocalPageBottomBarOpacity.current,
+        color = MaterialTheme.colorScheme.surface.copy(alpha = LocalPageBottomBarOpacity.current)
     ) {
         Column(
             modifier = Modifier
@@ -1883,7 +1999,7 @@ private fun Composer(
                 modifier = Modifier
                     .fillMaxWidth()
                     .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                    .padding(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 2.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -1904,7 +2020,7 @@ private fun Composer(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 12.dp, end = 12.dp, top = 2.dp, bottom = 10.dp),
+                    .padding(start = 12.dp, end = 12.dp, top = 2.dp, bottom = 6.dp),
                 verticalAlignment = Alignment.Bottom
             ) {
                 RpScrollableOutlinedTextField(
@@ -1938,7 +2054,7 @@ private fun Composer(
                     }
                 )
                 Spacer(modifier = Modifier.width(8.dp))
-                Surface(
+                AppSurface(
                     modifier = Modifier.size(48.dp),
                     shape = CircleShape,
                     color = sendButtonColor,
@@ -2100,7 +2216,7 @@ private fun LoadStateOverlay(loadState: GroupChatLoadState) {
             .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.2f)),
         contentAlignment = Alignment.Center
     ) {
-        Surface(
+        AppSurface(
             shape = RoundedCornerShape(18.dp),
             shadowElevation = 10.dp
         ) {

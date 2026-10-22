@@ -3,12 +3,6 @@ package me.kafuuneko.rpclient.feature.storyeditor.ui
 import android.os.SystemClock
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -45,11 +39,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.input.OutputTransformation
 import androidx.compose.foundation.text.input.TextFieldState
-import androidx.compose.ui.platform.LocalFocusManager
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
@@ -85,20 +75,14 @@ import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.adaptive.currentWindowAdaptiveInfo
@@ -106,29 +90,21 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.compositionLocalOf
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
-import androidx.compose.runtime.withFrameNanos
-import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedback
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextRange
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
@@ -137,12 +113,9 @@ import androidx.compose.ui.unit.sp
 import androidx.window.core.layout.WindowSizeClass
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
-import java.util.Locale
 import me.kafuuneko.rpclient.R
+import me.kafuuneko.rpclient.feature.appearance.presentation.PageBackgroundUiState
 import me.kafuuneko.rpclient.feature.storyeditor.model.StoryChapterDestination
 import me.kafuuneko.rpclient.feature.storyeditor.model.StoryChapterDropPosition
 import me.kafuuneko.rpclient.feature.storyeditor.model.StoryChapterDropTarget
@@ -170,6 +143,7 @@ import me.kafuuneko.rpclient.feature.storyeditor.presentation.StoryGenerationPha
 import me.kafuuneko.rpclient.feature.storyeditor.presentation.StoryGenerationState
 import me.kafuuneko.rpclient.feature.storyeditor.presentation.StorySaveState
 import me.kafuuneko.rpclient.feature.storyeditor.presentation.StorySettingsSection
+import me.kafuuneko.rpclient.libs.appearance.PageSurfaceKind
 import me.kafuuneko.rpclient.ui.dialog.AppActionItem
 import me.kafuuneko.rpclient.ui.dialog.AppActionListDialog
 import me.kafuuneko.rpclient.ui.dialog.AppConfirmDialog
@@ -182,34 +156,46 @@ import me.kafuuneko.rpclient.ui.dialog.PromptInspectorDialog
 import me.kafuuneko.rpclient.ui.dialog.StoryChapterDestinationOption
 import me.kafuuneko.rpclient.ui.dialog.StoryMoveChapterDialog
 import me.kafuuneko.rpclient.ui.theme.AppTheme
+import me.kafuuneko.rpclient.ui.widgets.AppCard
+import me.kafuuneko.rpclient.ui.widgets.AppPageScaffold
+import me.kafuuneko.rpclient.ui.widgets.AppSurface
 import me.kafuuneko.rpclient.ui.widgets.AppTopBar
-import me.kafuuneko.rpclient.ui.widgets.NoProviderBanner
 import me.kafuuneko.rpclient.ui.widgets.DraggableItem
+import me.kafuuneko.rpclient.ui.widgets.LocalPageBottomBarOpacity
+import me.kafuuneko.rpclient.ui.widgets.LocalPageContentOpacity
+import me.kafuuneko.rpclient.ui.widgets.LocalPageTopBarOpacity
+import me.kafuuneko.rpclient.ui.widgets.NoProviderBanner
+import me.kafuuneko.rpclient.ui.widgets.PageBackdrop
+import me.kafuuneko.rpclient.ui.widgets.PageButton
+import me.kafuuneko.rpclient.ui.widgets.PageSurface
 import me.kafuuneko.rpclient.ui.widgets.RpIconBubble
 import me.kafuuneko.rpclient.ui.widgets.RpLazyColumn
 import me.kafuuneko.rpclient.ui.widgets.RpScrollableOutlinedTextField
 import me.kafuuneko.rpclient.ui.widgets.RpTagRow
 import me.kafuuneko.rpclient.ui.widgets.StoryUserPersonaCard
-import me.kafuuneko.rpclient.ui.widgets.MarkdownMessageText
-import me.kafuuneko.rpclient.utils.MarkdownHighlightMapper
-import me.kafuuneko.rpclient.libs.AppModel
 import me.kafuuneko.rpclient.ui.widgets.dragContainer
 import me.kafuuneko.rpclient.ui.widgets.draggableScrollIndicator
+import me.kafuuneko.rpclient.ui.widgets.generalContentBackground
+import me.kafuuneko.rpclient.ui.widgets.pageCanvasColor
+import me.kafuuneko.rpclient.ui.widgets.pageSurfaceBlur
 import me.kafuuneko.rpclient.ui.widgets.rememberLazyListDragDropState
 import me.kafuuneko.rpclient.utils.rememberPromptMacroOutputTransformation
-import androidx.compose.ui.platform.LocalLocale
+import me.kafuuneko.rpclient.ui.widgets.PageFilterChip as FilterChip
+import me.kafuuneko.rpclient.ui.widgets.PageOutlinedTextField as OutlinedTextField
+import me.kafuuneko.rpclient.ui.widgets.PageSwitch as Switch
 
 /** 分卷/章节故事编辑器及 Story 设置的 Compose 入口。 */
 @Composable
 fun StoryEditorLayout(
     uiState: StoryEditorUiState,
     document: StoryEditorDocument?,
+    background: PageBackgroundUiState = PageBackgroundUiState(),
     emit: StoryEditorUiIntent.() -> Unit
 ) {
     when (uiState) {
         StoryEditorUiState.None -> EditorLoading()
-        is StoryEditorUiState.Normal -> StoryEditorNormal(uiState, document, emit)
-        is StoryEditorUiState.Finished -> StoryEditorLayout(uiState.previous, document) {}
+        is StoryEditorUiState.Normal -> StoryEditorNormal(uiState, document, background, emit)
+        is StoryEditorUiState.Finished -> StoryEditorLayout(uiState.previous, document, background) {}
     }
 }
 
@@ -217,6 +203,7 @@ fun StoryEditorLayout(
 private fun StoryEditorNormal(
     state: StoryEditorUiState.Normal,
     document: StoryEditorDocument?,
+    background: PageBackgroundUiState,
     emit: StoryEditorUiIntent.() -> Unit
 ) {
     BackHandler {
@@ -227,16 +214,19 @@ private fun StoryEditorNormal(
             is StoryEditorPageState.Settings -> StoryEditorUiIntent.CloseStorySettings.emit()
         }
     }
-    when (val pageState = state.pageState) {
-        StoryEditorPageState.Editor -> StoryEditorPage(state, document, emit)
-        StoryEditorPageState.Outline -> StoryOutlinePage(
-            storyTitle = state.topBarState.title,
-            structureState = state.structureState,
-            emit = emit
-        )
+    // 章节、大纲及设置都属于当前故事，加载设置时也保留同一张背景。
+    PageBackdrop(background, useContainerAppearance = state.pageState != StoryEditorPageState.Editor) {
+        when (val pageState = state.pageState) {
+            StoryEditorPageState.Editor -> StoryEditorPage(state, document, emit)
+            StoryEditorPageState.Outline -> StoryOutlinePage(
+                storyTitle = state.topBarState.title,
+                structureState = state.structureState,
+                emit = emit
+            )
 
-        StoryEditorPageState.LoadingSettings -> StorySettingsLoadingPage(emit)
-        is StoryEditorPageState.Settings -> StorySettingsPage(pageState, emit)
+            StoryEditorPageState.LoadingSettings -> StorySettingsLoadingPage(emit)
+            is StoryEditorPageState.Settings -> StorySettingsPage(pageState, emit)
+        }
     }
     EditorDialogSwitch(state, emit)
 }
@@ -264,21 +254,19 @@ private fun StoryEditorPage(
         }
     }
 
-    // Keep Markdown preview/edit state above adaptive layout branches so the toolbar can control it.
-    val markdownController = remember(document?.chapterId) {
-        StoryMarkdownEditorController(AppModel.storyMarkdownRenderingEnabled)
-    }
+    // 在自适应布局分支上方共享预览状态，确保各工具栏控制同一编辑器。
+    val markdownController = rememberStoryMarkdownController(document, state.contentState.markdownRenderingEnabled)
     // 窗口等级不随 IME 开合变化，避免输入时切换布局并打断焦点。
     val layoutMode = storyEditorLayoutMode(currentWindowAdaptiveInfo().windowSizeClass)
     CompositionLocalProvider(LocalStoryMarkdownEditorController provides markdownController) {
         StoryEditorScaffold(
-        state = state,
-        document = document,
-        editorState = editorState,
-        documentMatchesChapter = documentMatchesChapter,
-        layoutMode = layoutMode,
-        onContinue = onContinue,
-        emit = emit
+            state = state,
+            document = document,
+            editorState = editorState,
+            documentMatchesChapter = documentMatchesChapter,
+            layoutMode = layoutMode,
+            onContinue = onContinue,
+            emit = emit
         )
     }
 }
@@ -294,9 +282,9 @@ private fun StoryEditorScaffold(
     onContinue: (() -> Unit)?,
     emit: StoryEditorUiIntent.() -> Unit
 ) {
-    Scaffold(
+    AppPageScaffold(
         modifier = Modifier.fillMaxSize(),
-        containerColor = MaterialTheme.colorScheme.background,
+        containerColor = Color.Transparent,
         topBar = {
             // 手机横屏模式由左侧导航轨承载，Scaffold 顶栏隐藏以释放纵向空间
             if (layoutMode != StoryEditorLayoutMode.CompactWide) {
@@ -362,6 +350,8 @@ private fun StoryEditorTopBar(
 ) {
     AppTopBar(
         title = state.topBarState.title,
+        containerColor = MaterialTheme.colorScheme.background.copy(alpha = LocalPageTopBarOpacity.current),
+        modifier = Modifier.pageSurfaceBlur(PageSurfaceKind.TopBar),
         onBack = { StoryEditorUiIntent.Back.emit() },
         actions = {
             // 保存状态常驻顶栏，窗口紧凑时仍能看到草稿是否安全落库。
@@ -531,9 +521,9 @@ private fun StoryEditorLeftRail(
     compactMode: Boolean,
     emit: StoryEditorUiIntent.() -> Unit
 ) {
-    Surface(
+    PageSurface(kind = PageSurfaceKind.TopBar,
         shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f * LocalPageTopBarOpacity.current),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)),
         modifier = Modifier.fillMaxHeight()
     ) {
@@ -642,7 +632,7 @@ private fun SaveStatusMini(
     emit: StoryEditorUiIntent.() -> Unit
 ) {
     val clickable = saveState == StorySaveState.Failed
-    Surface(
+    AppSurface(
         modifier = Modifier.clickable(enabled = clickable) {
             StoryEditorUiIntent.RetrySave.emit()
         },
@@ -710,9 +700,9 @@ private fun StoryEditorRightDock(
     val hapticFeedback = LocalHapticFeedback.current
     val historyEnabled = contentState.editable && generationState is StoryGenerationState.Idle
 
-    Surface(
+    PageSurface(kind = PageSurfaceKind.BottomBar,
         shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f * LocalPageBottomBarOpacity.current),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)),
         modifier = Modifier.fillMaxHeight()
     ) {
@@ -725,9 +715,9 @@ private fun StoryEditorRightDock(
         ) {
             // 顶部：字数微型指示
             if (!compactMode) {
-                Surface(
+                AppSurface(
                     shape = RoundedCornerShape(8.dp),
-                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.8f)
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.8f * LocalPageBottomBarOpacity.current)
                 ) {
                     Column(
                         modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
@@ -755,7 +745,7 @@ private fun StoryEditorRightDock(
                 verticalArrangement = Arrangement.spacedBy(2.dp)
             ) {
                 // 灵感引导展开按钮
-                Surface(
+                AppSurface(
                     modifier = Modifier.clickable(
                         enabled = contentState.editable && generationState is StoryGenerationState.Idle,
                         onClick = {
@@ -856,7 +846,7 @@ private fun LandscapeGenerationAction(
         }
 
         StoryGenerationState.Preparing,
-        StoryGenerationState.Applying -> Surface(
+        StoryGenerationState.Applying -> AppSurface(
             modifier = Modifier.size(42.dp),
             shape = RoundedCornerShape(12.dp),
             color = MaterialTheme.colorScheme.primaryContainer
@@ -915,7 +905,7 @@ private fun StoryEditorLandscapeCenterPane(
             horizontalArrangement = Arrangement.Start
         ) {
             // 当前章节名称微胶囊
-            Surface(
+            AppSurface(
                 modifier = Modifier.clickable(
                     enabled = documentMatchesChapter &&
                             state.contentState.editable &&
@@ -933,7 +923,7 @@ private fun StoryEditorLandscapeCenterPane(
                     }
                 ),
                 shape = RoundedCornerShape(8.dp),
-                color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.45f)
+                color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.45f * LocalPageContentOpacity.current)
             ) {
                 Row(
                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
@@ -970,7 +960,7 @@ private fun StoryEditorLandscapeCenterPane(
             exit = fadeOut() + shrinkVertically()
         ) {
             OutlinedTextField(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().generalContentBackground(RoundedCornerShape(12.dp)),
                 value = state.continuationInputState.guidanceDraft,
                 onValueChange = { StoryEditorUiIntent.ChangeContinuationGuidance(it).emit() },
                 enabled = state.contentState.editable && state.generationState is StoryGenerationState.Idle,
@@ -1154,38 +1144,6 @@ private enum class StoryEditorLayoutMode {
     CompactNarrow
 }
 
-/** Shared Markdown mode and confirmation action for the editor and its toolbars. */
-private class StoryMarkdownEditorController(initialPreview: Boolean) {
-    var preview by mutableStateOf(initialPreview)
-    var onConfirm: (() -> Unit)? = null
-}
-
-private val LocalStoryMarkdownEditorController = compositionLocalOf {
-    StoryMarkdownEditorController(initialPreview = true)
-}
-
-@Composable
-private fun MarkdownModeToolbarAction() {
-    val controller = LocalStoryMarkdownEditorController.current
-    if (AppModel.storyMarkdownRenderingEnabled) {
-        TextButton(
-            onClick = {
-                if (controller.preview) {
-                    controller.preview = false
-                } else {
-                    controller.onConfirm?.invoke()
-                }
-            }
-        ) {
-            Text(
-                stringResource(
-                    if (controller.preview) R.string.story_markdown_edit else R.string.confirm
-                )
-            )
-        }
-    }
-}
-
 @Composable
 private fun CurrentChapterBar(
     state: StoryEditorStructureState,
@@ -1193,18 +1151,14 @@ private fun CurrentChapterBar(
     compact: Boolean,
     onClick: (() -> Unit)?
 ) {
-    // 外层容器采用 Secondary Container 柔和配色与微边框
-    Surface(
+    // 章节卡片与正文共用内容区设置，不额外绘制装饰边框。
+    PageSurface(kind = PageSurfaceKind.Content,
         modifier = Modifier
             .fillMaxWidth()
             .clickable(enabled = enabled && onClick != null) { onClick?.invoke() },
         shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.55f),
+        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.55f * LocalPageContentOpacity.current),
         contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
-        border = BorderStroke(
-            1.dp,
-            MaterialTheme.colorScheme.secondary.copy(alpha = 0.25f)
-        )
     ) {
         Row(
             modifier = Modifier.padding(
@@ -1254,9 +1208,9 @@ private fun CurrentChapterBar(
                 }
             }
             // 进入大纲的轻量胶囊按钮提示
-            Surface(
+            AppSurface(
                 shape = RoundedCornerShape(8.dp),
-                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.5f)
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.5f * LocalPageContentOpacity.current)
             ) {
                 Row(
                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
@@ -1286,433 +1240,13 @@ private fun CurrentChapterBar(
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun StoryTextEditor(
-    modifier: Modifier,
-    document: StoryEditorDocument,
-    editorState: TextFieldState,
-    editable: Boolean,
-    generationState: StoryGenerationState,
-    emit: StoryEditorUiIntent.() -> Unit
-) {
-    // 正文不使用 rememberSaveable，避免长文进入 Activity Bundle；Room 承担进程恢复。
-    val editorScrollState = rememberScrollState()
-    val markdownPreviewScrollState = rememberScrollState()
-    val coroutineScope = rememberCoroutineScope()
-    var editorTextLayout by remember(document.chapterId) { mutableStateOf<TextLayoutResult?>(null) }
-    var editorTextLayoutSyncVersion by remember(document.chapterId) { mutableLongStateOf(-1L) }
-    var editorTextLayoutLength by remember(document.chapterId) { mutableIntStateOf(-1) }
-    var markdownHighlightedStartY by remember(document.chapterId) { mutableStateOf<Float?>(null) }
-    var markdownHighlightedPositionSyncVersion by remember(document.chapterId) { mutableLongStateOf(-1L) }
-    var markdownHighlightedPositionLength by remember(document.chapterId) { mutableIntStateOf(-1) }
-    var shouldScrollToGeneratedRange by remember(document.chapterId) { mutableStateOf(false) }
-    val markdownEnabled = AppModel.storyMarkdownRenderingEnabled
-    val markdownController = LocalStoryMarkdownEditorController.current
-    val markdownPreview = markdownController.preview
-    val keyboardController = LocalSoftwareKeyboardController.current
-    val focusManager = LocalFocusManager.current
-    val imeVisibleState = rememberUpdatedState(WindowInsets.isImeVisible)
-    val returnToMarkdownPreview: () -> Unit = {
-        // Publish the latest field contents before switching away from raw editing.
-        StoryEditorUiIntent.EditorSnapshotChanged(
-            StoryEditorSnapshot(
-                chapterId = document.chapterId,
-                content = editorState.text.toString(),
-                isComposing = editorState.composition != null
-            )
-        ).emit()
-        markdownController.preview = true
-        focusManager.clearFocus(force = true)
-        keyboardController?.hide()
-    }
-    SideEffect {
-        markdownController.onConfirm = returnToMarkdownPreview
-    }
-    BackHandler(enabled = markdownEnabled && !markdownPreview) {
-        returnToMarkdownPreview()
-    }
-    LaunchedEffect(markdownPreview, markdownEnabled) {
-        if (!markdownEnabled) return@LaunchedEffect
-
-        // Preserve the source viewport as a fraction while the two modes have different
-        // content/layout heights. Restore only after any IME transition has finished.
-        val sourceScrollState = if (markdownPreview) {
-            editorScrollState
-        } else {
-            markdownPreviewScrollState
-        }
-        val scrollFraction = if (sourceScrollState.maxValue > 0) {
-            (sourceScrollState.value.toFloat() / sourceScrollState.maxValue).coerceIn(0f, 1f)
-        } else {
-            0f
-        }
-
-        if (imeVisibleState.value) {
-            keyboardController?.hide()
-            // Insets changes can resize the editor after the mode switch. Observe the
-            // Compose state rather than reading WindowInsets from a coroutine snapshot.
-            withTimeoutOrNull(IME_VISIBILITY_SETTLE_TIMEOUT_MILLIS) {
-                snapshotFlow { imeVisibleState.value }.first { isVisible -> !isVisible }
-            }
-        } else if (!markdownPreview) {
-            // Opening Raw Text is a viewing action, not an implicit request to start editing.
-            keyboardController?.hide()
-        }
-
-        withFrameNanos { }
-        withFrameNanos { }
-
-        val targetScrollState = if (markdownPreview) {
-            markdownPreviewScrollState
-        } else {
-            editorScrollState
-        }
-        targetScrollState.scrollTo(
-            (targetScrollState.maxValue * scrollFraction)
-                .toInt()
-                .coerceIn(0, targetScrollState.maxValue)
-        )
-    }
-    val followStreamingOutput = generationState is StoryGenerationState.Streaming
-    val generatedTextColor = MaterialTheme.colorScheme.primary
-    val isStreaming = generationState is StoryGenerationState.Streaming ||
-            generationState is StoryGenerationState.Preparing ||
-            generationState is StoryGenerationState.Applying
-
-    // 流式生成中的呼吸光晕动效
-    val infiniteTransition = rememberInfiniteTransition(label = "StoryStreamingGlow")
-    val glowAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.25f,
-        targetValue = 0.75f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1200, easing = LinearEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "GlowAlpha"
-    )
-
-    val displayedEditedRange = document.latestEditedRange.takeUnless {
-        generationState is StoryGenerationState.Streaming ||
-                generationState is StoryGenerationState.Applying
-    }
-    val currentEditedRange by rememberUpdatedState(displayedEditedRange)
-    val currentEditedStyle by rememberUpdatedState(
-        SpanStyle(
-            color = generatedTextColor,
-            background = generatedTextColor.copy(alpha = 0.12f),
-            fontWeight = FontWeight.Medium
-        )
-    )
-    // 转换实例必须跨流式分片保持稳定，否则 BasicTextField 会反复重建布局状态并闪烁。
-    val latestEditedOutputTransformation = remember {
-        OutputTransformation {
-            val editedRange = currentEditedRange
-            if (
-                editedRange != null &&
-                editedRange.start < editedRange.end &&
-                editedRange.end <= length
-            ) {
-                addStyle(
-                    spanStyle = currentEditedStyle,
-                    start = editedRange.start,
-                    end = editedRange.end
-                )
-            }
-        }
-    }
-    LaunchedEffect(document.syncVersion) {
-        if (editorState.text.toString() != document.content) {
-            editorState.syncTextPreservingSelection(document.content)
-        }
-    }
-    LaunchedEffect(followStreamingOutput, editorScrollState) {
-        if (!followStreamingOutput) return@LaunchedEffect
-        // 流式文本布局完成后 maxValue 会持续增长，跟随它才能稳定滚到最新输出。
-        snapshotFlow { editorScrollState.maxValue }.collect { bottom ->
-            editorScrollState.scrollTo(bottom)
-        }
-    }
-    LaunchedEffect(followStreamingOutput, markdownPreview, markdownPreviewScrollState) {
-        if (!followStreamingOutput || !markdownPreview) return@LaunchedEffect
-        var previousMax = markdownPreviewScrollState.maxValue
-        snapshotFlow { markdownPreviewScrollState.value to markdownPreviewScrollState.maxValue }
-            .collect { (value, max) ->
-                val wasFollowingBottom = previousMax == 0 || value >= previousMax - 48
-                if (max > previousMax && wasFollowingBottom) {
-                    markdownPreviewScrollState.scrollTo(max)
-                }
-                previousMax = max
-            }
-    }
-    LaunchedEffect(generationState, document.syncVersion, markdownPreview, markdownEnabled) {
-        when (generationState) {
-            is StoryGenerationState.Applying -> {
-                // Only a successfully applied result should trigger an automatic scroll.
-                shouldScrollToGeneratedRange = true
-                return@LaunchedEffect
-            }
-            is StoryGenerationState.Failed,
-            is StoryGenerationState.Preparing,
-            is StoryGenerationState.Streaming -> {
-                shouldScrollToGeneratedRange = false
-                return@LaunchedEffect
-            }
-            is StoryGenerationState.Idle -> Unit
-        }
-        if (!shouldScrollToGeneratedRange) return@LaunchedEffect
-
-        val range = document.latestEditedRange
-        if (
-            range == null ||
-            range.start < 0 ||
-            range.start >= range.end ||
-            range.end > document.content.length
-        ) {
-            shouldScrollToGeneratedRange = false
-            return@LaunchedEffect
-        }
-
-        val targetContent = document.content
-        val targetContentLength = targetContent.length
-        val targetSyncVersion = document.syncVersion
-        // The document and TextFieldState are synchronized asynchronously. Wait for the final
-        // content, then wait for a layout tagged with the same document revision and text length.
-        snapshotFlow { editorState.text.toString() }.first { it == targetContent }
-
-        if (markdownEnabled && markdownPreview) {
-            val targetY = snapshotFlow {
-                Triple(
-                    markdownHighlightedPositionSyncVersion,
-                    markdownHighlightedPositionLength,
-                    markdownHighlightedStartY
-                )
-            }.first { (version, length, _) ->
-                version == targetSyncVersion && length == targetContentLength
-            }.third
-            if (targetY != null) {
-                markdownPreviewScrollState.scrollTo(
-                    targetY.toInt().coerceIn(0, markdownPreviewScrollState.maxValue)
-                )
-            }
-        } else {
-            val textLayout = snapshotFlow {
-                Triple(editorTextLayoutSyncVersion, editorTextLayoutLength, editorTextLayout)
-            }.first { (version, length, layoutResult) ->
-                version == targetSyncVersion && length == targetContentLength && layoutResult != null
-            }.third
-            val targetY = textLayout
-                ?.getCursorRect(range.start)
-                ?.top
-                ?.toInt()
-            if (targetY != null) {
-                editorScrollState.scrollTo(targetY.coerceIn(0, editorScrollState.maxValue))
-            }
-        }
-        shouldScrollToGeneratedRange = false
-    }
-    LaunchedEffect(editorState) {
-        snapshotFlow {
-            StoryEditorSnapshot(
-                chapterId = document.chapterId,
-                content = editorState.text.toString(),
-                isComposing = editorState.composition != null
-            )
-        }.distinctUntilChanged().collect { snapshot ->
-            StoryEditorUiIntent.EditorSnapshotChanged(snapshot).emit()
-        }
-    }
-
-    Surface(
-        modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(20.dp),
-        shadowElevation = if (isStreaming) 2.dp else 0.dp,
-        border = BorderStroke(
-            width = if (isStreaming) 1.5.dp else 1.dp,
-            color = if (isStreaming) {
-                MaterialTheme.colorScheme.primary.copy(alpha = glowAlpha)
-            } else {
-                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)
-            }
-        ),
-        color = MaterialTheme.colorScheme.surface
-    ) {
-        BasicTextField(
-            state = editorState,
-            modifier = Modifier
-                .fillMaxSize()
-                .draggableScrollIndicator(editorScrollState),
-            enabled = editable && (!markdownEnabled || !markdownPreview),
-            textStyle = MaterialTheme.typography.bodyLarge.merge(
-                TextStyle(
-                    color = MaterialTheme.colorScheme.onSurface,
-                    lineHeight = 28.sp
-                )
-            ),
-            scrollState = editorScrollState,
-            onTextLayout = { getResult ->
-                val layoutResult = getResult()
-                if (layoutResult != null && layoutResult.layoutInput.text.text == document.content) {
-                    // Never tag a stale layout with the latest document revision.
-                    editorTextLayout = layoutResult
-                    editorTextLayoutSyncVersion = document.syncVersion
-                    editorTextLayoutLength = layoutResult.layoutInput.text.length
-                }
-            },
-            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-            outputTransformation = latestEditedOutputTransformation,
-            decorator = { innerTextField ->
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 20.dp, vertical = 18.dp)
-                ) {
-                    if (markdownEnabled && markdownPreview) {
-                        Column(
-                            modifier = Modifier.fillMaxSize()
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .fillMaxWidth()
-                            ) {
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .draggableScrollIndicator(
-                                            state = markdownPreviewScrollState,
-                                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.9f),
-                                            thumbThickness = 6.dp
-                                        )
-                                        .verticalScroll(markdownPreviewScrollState)
-                                        .padding(end = 36.dp)
-                                ) {
-                                val sourceText = editorState.text.toString()
-                                val editedRange = displayedEditedRange?.takeIf {
-                                    it.start >= 0 && it.start < it.end && it.end <= sourceText.length
-                                }
-                                val highlightedText = editedRange?.let { range ->
-                                    sourceText.substring(range.start, range.end)
-                                }
-                                val highlightedOccurrenceIndex = if (
-                                    editedRange != null && !highlightedText.isNullOrBlank()
-                                ) {
-                                    MarkdownHighlightMapper.countOccurrencesBefore(
-                                        prefix = sourceText.substring(0, editedRange.start),
-                                        highlightedText = highlightedText
-                                    )
-                                } else {
-                                    0
-                                }
-                                MarkdownMessageText(
-                                    content = sourceText,
-                                    isUser = false,
-                                    modifier = Modifier.fillMaxWidth(),
-                                    blockSpacing = 16.dp,
-                                    highlightedText = highlightedText,
-                                    highlightedOccurrenceIndex = highlightedOccurrenceIndex,
-                                    onHighlightedPosition = { position ->
-                                        // Layout callbacks can arrive before the TextFieldState has
-                                        // caught up with the document flow. Do not label those
-                                        // coordinates as belonging to the new document revision.
-                                        if (sourceText == document.content) {
-                                            markdownHighlightedStartY = position
-                                            markdownHighlightedPositionSyncVersion = document.syncVersion
-                                            markdownHighlightedPositionLength = sourceText.length
-                                        }
-                                    }
-                                )
-                                }
-                                Column(
-                                    modifier = Modifier
-                                        .align(Alignment.TopEnd)
-                                        .fillMaxHeight(),
-                                    verticalArrangement = Arrangement.SpaceBetween,
-                                    horizontalAlignment = Alignment.CenterHorizontally
-                                ) {
-                                    Surface(
-                                        shape = CircleShape,
-                                        color = MaterialTheme.colorScheme.surfaceVariant,
-                                        shadowElevation = 3.dp
-                                    ) {
-                                        IconButton(
-                                            onClick = {
-                                                coroutineScope.launch {
-                                                    markdownPreviewScrollState.animateScrollTo(0)
-                                                }
-                                            },
-                                            modifier = Modifier.size(36.dp)
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Rounded.ArrowUpward,
-                                                contentDescription = "Scroll to top",
-                                                tint = MaterialTheme.colorScheme.primary
-                                            )
-                                        }
-                                    }
-                                    Surface(
-                                        shape = CircleShape,
-                                        color = MaterialTheme.colorScheme.surfaceVariant,
-                                        shadowElevation = 3.dp
-                                    ) {
-                                        IconButton(
-                                            onClick = {
-                                                coroutineScope.launch {
-                                                    markdownPreviewScrollState.animateScrollTo(
-                                                        markdownPreviewScrollState.maxValue
-                                                    )
-                                                }
-                                            },
-                                            modifier = Modifier.size(36.dp)
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Rounded.ArrowDownward,
-                                                contentDescription = "Scroll to bottom",
-                                                tint = MaterialTheme.colorScheme.primary
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    } else if (markdownEnabled) {
-                        Column(
-                            modifier = Modifier.fillMaxSize()
-                        ) {
-                            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                                if (editorState.text.isEmpty()) {
-                                    Text(
-                                        text = stringResource(R.string.story_editor_placeholder),
-                                        style = MaterialTheme.typography.bodyLarge,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.58f)
-                                    )
-                                }
-                                innerTextField()
-                            }
-                        }
-                    } else {
-                        if (editorState.text.isEmpty()) {
-                            Text(
-                                text = stringResource(R.string.story_editor_placeholder),
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.58f)
-                            )
-                        }
-                        innerTextField()
-                    }
-                }
-            }
-        )
-    }
-}
-
 @Composable
 private fun SaveStatus(
     saveState: StorySaveState,
     emit: StoryEditorUiIntent.() -> Unit
 ) {
     val clickable = saveState == StorySaveState.Failed
-    Surface(
+    AppSurface(
         modifier = Modifier.clickable(enabled = clickable) {
             StoryEditorUiIntent.RetrySave.emit()
         },
@@ -1765,7 +1299,7 @@ private fun SaveProblemBanner(
     emit: StoryEditorUiIntent.() -> Unit
 ) {
     when (saveState) {
-        StorySaveState.Failed -> Card(
+        StorySaveState.Failed -> AppCard(
             colors = CardDefaults.cardColors(
                 containerColor = MaterialTheme.colorScheme.errorContainer
             ),
@@ -1788,7 +1322,7 @@ private fun SaveProblemBanner(
             }
         }
 
-        StorySaveState.Conflict -> Card(
+        StorySaveState.Conflict -> AppCard(
             colors = CardDefaults.cardColors(
                 containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.85f)
             ),
@@ -1833,7 +1367,7 @@ private fun GenerationProblemBanner(
     emit: StoryEditorUiIntent.() -> Unit
 ) {
     val failure = generationState as? StoryGenerationState.Failed ?: return
-    Card(
+    AppCard(
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.8f)
         ),
@@ -1923,10 +1457,10 @@ private fun EditorCompactBottomBar(
 ) {
     val hapticFeedback = LocalHapticFeedback.current
     val historyEnabled = contentState.editable && generationState is StoryGenerationState.Idle
-    Surface(
+    PageSurface(kind = PageSurfaceKind.BottomBar,
         shape = RoundedCornerShape(18.dp),
-        tonalElevation = 3.dp,
-        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 3.dp * LocalPageBottomBarOpacity.current,
+        color = MaterialTheme.colorScheme.surface.copy(alpha = LocalPageBottomBarOpacity.current),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.28f))
     ) {
         Row(
@@ -1938,7 +1472,7 @@ private fun EditorCompactBottomBar(
         ) {
             // 引导输入压缩为单行，避免紧凑窗口继续堆叠两层底部控件。
             OutlinedTextField(
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.weight(1f).generalContentBackground(RoundedCornerShape(14.dp)),
                 value = continuationInputState.guidanceDraft,
                 onValueChange = { StoryEditorUiIntent.ChangeContinuationGuidance(it).emit() },
                 enabled = contentState.editable && generationState is StoryGenerationState.Idle,
@@ -1958,7 +1492,6 @@ private fun EditorCompactBottomBar(
                     referenceState = referenceState
                 )
             }
-            MarkdownModeToolbarAction()
             IconButton(
                 onClick = {
                     hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
@@ -2128,10 +1661,10 @@ private fun EditorBottomBar(
     emit: StoryEditorUiIntent.() -> Unit
 ) {
     val hapticFeedback = LocalHapticFeedback.current
-    Surface(
+    PageSurface(kind = PageSurfaceKind.BottomBar,
         modifier = modifier,
-        tonalElevation = 3.dp,
-        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 3.dp * LocalPageBottomBarOpacity.current,
+        color = MaterialTheme.colorScheme.surface.copy(alpha = LocalPageBottomBarOpacity.current),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.28f))
     ) {
         Column(
@@ -2254,7 +1787,6 @@ private fun EditorBottomBar(
                     else -> {
                         val historyEnabled = contentState.editable &&
                                 generationState is StoryGenerationState.Idle
-                        MarkdownModeToolbarAction()
                         IconButton(
                             onClick = {
                                 hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
@@ -2329,10 +1861,10 @@ private fun StoryGenerationStatusCard(
             hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
             StoryEditorUiIntent.ToggleGenerationReasoning.emit()
         }
-    Surface(
+    AppSurface(
         modifier = cardModifier,
         shape = RoundedCornerShape(18.dp),
-        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.42f),
+        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.42f * LocalPageBottomBarOpacity.current),
         contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
         border = BorderStroke(
             1.dp,
@@ -2455,9 +1987,9 @@ private fun StoryGenerationReasoningDetail(
         exit = fadeOut() + shrinkVertically()
     ) {
         // 内层 Surface 将模型文本与可操作的外层状态卡作视觉分组
-        Surface(
+        AppSurface(
             shape = RoundedCornerShape(12.dp),
-            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f),
+            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f * LocalPageBottomBarOpacity.current),
             border = BorderStroke(
                 0.5.dp,
                 MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
@@ -2505,9 +2037,9 @@ private fun StoryGenerationStatusIcon() {
 /** 用弱强调胶囊展示当前生成任务已经持续的秒数。 */
 @Composable
 private fun StoryGenerationElapsedBadge(elapsedSeconds: Long) {
-    Surface(
+    AppSurface(
         shape = RoundedCornerShape(50),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.70f)
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.70f * LocalPageBottomBarOpacity.current)
     ) {
         Text(
             text = stringResource(R.string.story_generation_elapsed_seconds, elapsedSeconds),
@@ -2791,7 +2323,7 @@ private fun ImportPreviewDialog(
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             OutlinedTextField(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().generalContentBackground(RoundedCornerShape(14.dp), hasLabel = true),
                 value = preview.title,
                 onValueChange = { StoryEditorUiIntent.ChangeImportTitle(it).emit() },
                 label = { Text(stringResource(R.string.story_title)) },
@@ -2850,7 +2382,7 @@ private fun StoryOutlinePage(
         onDragEnd = { StoryEditorUiIntent.CommitStoryChapterOrder.emit() }
     )
 
-    Scaffold(
+    AppPageScaffold(
         topBar = {
             AppTopBar(
                 title = stringResource(R.string.story_outline),
@@ -3031,7 +2563,7 @@ private fun OutlineSummary(
     updating: Boolean
 ) {
     // 汇总卡片采用 Primary Container 柔和主色调与通透圆角
-    Card(
+    AppCard(
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
         ),
@@ -3136,7 +2668,7 @@ private fun StoryVolumeOutlineHeader(
         volume.chapters.sumOf { it.characterCount }
     }
     // 分卷头部采用容器卡片样式，包含章节数与总字数统计
-    Surface(
+    AppSurface(
         shape = RoundedCornerShape(16.dp),
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
         border = BorderStroke(
@@ -3220,7 +2752,7 @@ private fun StoryChapterOutlineRow(
 ) {
     val haptic = LocalHapticFeedback.current
     // 章节行卡片容器，包含序号、高亮边框、当前编辑状态徽标与拖拽手柄
-    Surface(
+    AppSurface(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(enabled = enabled) {
@@ -3250,7 +2782,7 @@ private fun StoryChapterOutlineRow(
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             // 章节两位工整序号徽标
-            Surface(
+            AppSurface(
                 shape = RoundedCornerShape(8.dp),
                 color = if (selected) {
                     MaterialTheme.colorScheme.primary
@@ -3288,7 +2820,7 @@ private fun StoryChapterOutlineRow(
                         modifier = Modifier.weight(1f, fill = false)
                     )
                     if (selected) {
-                        Surface(
+                        AppSurface(
                             shape = RoundedCornerShape(6.dp),
                             color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
                             contentColor = MaterialTheme.colorScheme.primary
@@ -3315,7 +2847,7 @@ private fun StoryChapterOutlineRow(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     if (chapter.characterCount < 50) {
-                        Surface(
+                        AppSurface(
                             shape = RoundedCornerShape(4.dp),
                             color = MaterialTheme.colorScheme.surfaceVariant,
                             contentColor = MaterialTheme.colorScheme.onSurfaceVariant
@@ -3355,7 +2887,7 @@ private fun OutlineAddChapterButton(
     onClick: () -> Unit
 ) {
     val haptic = LocalHapticFeedback.current
-    Surface(
+    AppSurface(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(enabled = enabled) {
@@ -3398,7 +2930,7 @@ private fun OutlineEmptyMessage(
     actionTextRes: Int? = null,
     enabled: Boolean = true
 ) {
-    Surface(
+    AppSurface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
@@ -3584,7 +3116,7 @@ private fun StorySettingsPage(
     state: StoryEditorPageState.Settings,
     emit: StoryEditorUiIntent.() -> Unit
 ) {
-    Scaffold(
+    AppPageScaffold(
         modifier = Modifier.fillMaxSize(),
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
@@ -3633,7 +3165,7 @@ private fun StorySettingsPage(
 
 @Composable
 private fun StorySettingsLoadingPage(emit: StoryEditorUiIntent.() -> Unit) {
-    Scaffold(
+    AppPageScaffold(
         modifier = Modifier.fillMaxSize(),
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
@@ -3807,7 +3339,7 @@ private fun StorySummarySettings(
         shape = RoundedCornerShape(16.dp)
     )
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-        Button(
+        PageButton(
             onClick = { StoryEditorUiIntent.SummarizeStory.emit() },
             enabled = !state.isSaving
         ) {
@@ -3958,7 +3490,7 @@ private fun CharacterSettingCard(
     canMoveDown: Boolean,
     emit: StoryEditorUiIntent.() -> Unit
 ) {
-    Card(
+    AppCard(
         shape = RoundedCornerShape(18.dp),
         border = BorderStroke(
             1.dp,
@@ -4119,7 +3651,7 @@ private fun LorebookGroupCard(
     emit: StoryEditorUiIntent.() -> Unit
 ) {
     var expanded by remember(group.id) { mutableStateOf(false) }
-    Surface(
+    AppSurface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(18.dp),
         border = BorderStroke(
@@ -4205,7 +3737,7 @@ private fun LorebookEntryRow(
     entry: StoryLorebookEntryItem,
     emit: StoryEditorUiIntent.() -> Unit
 ) {
-    Surface(
+    AppSurface(
         modifier = Modifier
             .fillMaxWidth()
             .clickable { StoryEditorUiIntent.ToggleLorebookEntry(entry.id).emit() },
@@ -4296,7 +3828,7 @@ private fun EditorLoading() {
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background),
+            .background(pageCanvasColor()),
         contentAlignment = Alignment.Center
     ) {
         CircularProgressIndicator()
@@ -4357,7 +3889,7 @@ private fun StoryEditorLayoutTabletLandscapePreview() {
 @Composable
 private fun StoryGenerationStatusCardPreview() {
     AppTheme(dynamicColor = false) {
-        Surface(color = MaterialTheme.colorScheme.background) {
+        AppSurface(color = MaterialTheme.colorScheme.background) {
             StoryGenerationStatusCard(
                 generationState = StoryGenerationState.Streaming(
                     partialText = "",
@@ -4374,5 +3906,4 @@ private fun StoryGenerationStatusCardPreview() {
 }
 
 private const val SLOW_GENERATION_HINT_SECONDS = 12L
-private const val IME_VISIBILITY_SETTLE_TIMEOUT_MILLIS = 750L
 private const val REASONING_SCROLL_BOTTOM_TOLERANCE_PX = 2
