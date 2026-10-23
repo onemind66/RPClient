@@ -37,6 +37,7 @@ import me.kafuuneko.rpclient.libs.backup.BackupDatabaseCodec.tableNames
 import me.kafuuneko.rpclient.libs.backup.BackupDatabaseCodec.tableRows
 import me.kafuuneko.rpclient.libs.character.CharacterCardMapper
 import me.kafuuneko.rpclient.libs.character.LorebookCodec
+import me.kafuuneko.rpclient.libs.regex.RegexScriptCodec
 import me.kafuuneko.rpclient.libs.room.AppDatabase
 import me.kafuuneko.rpclient.libs.room.RequestLogDatabase
 import org.json.JSONArray
@@ -219,6 +220,7 @@ class PortableBackupRepository(
             require(logsSchemaFile.isFile) { "The request-log database schema is missing." }
             applyEditableCharacterDocuments(stage)
             applyEditableWorldbookDocuments(stage)
+            applyEditableRegexDocuments(stage)
             applyEditableStoryDocuments(stage)
             applyEditableChatDocuments(stage)
             applyEditableAttachmentDocuments(stage)
@@ -402,6 +404,94 @@ class PortableBackupRepository(
             }
             tableRows.put("lorebook_entries", updatedEntries)
             writeText(file, document.toString(2))
+        }
+    }
+
+    /**
+     * Synchronize standard RegexScriptData arrays with the app's scoped script rows. The hidden
+     * row IDs preserve local identity; visible array order controls script order and deletion.
+     */
+    private fun applyEditableRegexDocuments(root: File) {
+        val gson = Gson()
+        val codec = RegexScriptCodec(gson)
+        val regexDirectory = File(root, "regex")
+        val scriptFiles = buildList {
+            add(File(regexDirectory, "global-scripts.json"))
+            addAll(File(regexDirectory, "character-scripts").listFiles().orEmpty()
+                .filter { it.isFile && it.extension == "json" })
+        }.filter { it.isFile }
+        var nextRowId = scriptFiles.mapNotNull { file ->
+            runCatching {
+                JSONObject(file.readText(Charsets.UTF_8)).getJSONObject(TABLE_ROWS_KEY)
+                    .getJSONArray("regex_scripts").objects().maxOfOrNull { it.optLong("rowId") }
+            }.getOrNull()
+        }.maxOrNull()?.plus(1L) ?: 1L
+
+        scriptFiles.forEach { file ->
+            val document = JSONObject(file.readText(Charsets.UTF_8))
+            val tableRows = document.optJSONObject(TABLE_ROWS_KEY) ?: JSONObject().also {
+                document.put(TABLE_ROWS_KEY, it)
+            }
+            val rowArray = tableRows.optJSONArray("regex_scripts") ?: JSONArray()
+            val oldRows = rowArray.objects().sortedBy { it.optInt("sortOrder") }
+            val scripts = codec.parseList((document.optJSONArray("scripts") ?: JSONArray()).toString())
+            val isGlobal = file.name == "global-scripts.json"
+            val characterId = if (isGlobal) null else {
+                val explicit = document.optLong("characterId", -1L)
+                if (explicit > 0L) explicit else Regex("""character-(\d+)\.json""")
+                    .matchEntire(file.name)?.groupValues?.get(1)?.toLongOrNull()
+            }
+            require(isGlobal || characterId != null) {
+                "Character regex document has no valid character ID: " + file.name
+            }
+            val updatedRows = JSONArray()
+            scripts.forEachIndexed { index, script ->
+                val old = oldRows.getOrNull(index)
+                val rowId = old?.optLong("rowId")?.takeIf { it > 0L } ?: nextRowId++
+                val row = (old ?: JSONObject())
+                    .put("rowId", rowId)
+                    .put("characterId", characterId ?: JSONObject.NULL)
+                    .put("scriptId", script.id)
+                    .put("sortOrder", index)
+                    .put("scriptName", script.scriptName)
+                    .put("findRegex", script.findRegex)
+                    .put("replaceString", script.replaceString)
+                    .put("trimStringsJson", gson.toJson(script.trimStrings))
+                    .put("placementJson", gson.toJson(script.placement))
+                    .put("disabled", script.disabled)
+                    .put("markdownOnly", script.markdownOnly)
+                    .put("promptOnly", script.promptOnly)
+                    .put("runOnEdit", script.runOnEdit)
+                    .put("substituteRegex", script.substituteRegex)
+                    .put("minDepth", script.minDepth ?: JSONObject.NULL)
+                    .put("maxDepth", script.maxDepth ?: JSONObject.NULL)
+                    .put("rawJson", script.rawJson)
+                updatedRows.put(row)
+            }
+            tableRows.put("regex_scripts", updatedRows)
+            writeText(file, document.toString(2))
+        }
+
+        val authorizationFile = File(regexDirectory, "character-authorizations.json")
+        if (authorizationFile.isFile) {
+            val document = JSONObject(authorizationFile.readText(Charsets.UTF_8))
+            val ids = document.optJSONArray("characterIds") ?: JSONArray()
+            val rows = JSONArray()
+            val seen = mutableSetOf<Long>()
+            ids.objectsOrValues().forEach { value ->
+                val id = (value as? Number)?.toLong()
+                    ?: value.toString().toLongOrNull()
+                    ?: error("Invalid authorized character ID.")
+                require(id > 0L) { "Authorized character IDs must be positive." }
+                require(seen.add(id)) { "Duplicate authorized character ID: " + id }
+                rows.put(JSONObject().put("characterId", id))
+            }
+            val tableRows = document.optJSONObject(TABLE_ROWS_KEY) ?: JSONObject().also {
+                document.put(TABLE_ROWS_KEY, it)
+            }
+            tableRows.put("regex_character_authorizations", rows)
+            document.put("characterIds", JSONArray().apply { seen.sorted().forEach { put(it) } })
+            writeText(authorizationFile, document.toString(2))
         }
     }
 
@@ -955,6 +1045,9 @@ class PortableBackupRepository(
         }
         return types
     }
+
+    private fun JSONArray.objectsOrValues(): List<Any?> =
+        (0 until length()).map { get(it) }
 
     /** 将 Android 偏好类型转为便于人工读取的 JSON。 */
     private fun sharedPreferencesJson(preferences: SharedPreferences): JSONObject {
