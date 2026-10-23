@@ -131,16 +131,16 @@ internal object BackupDatabaseCodec {
      */
     private fun isPortableDocumentPath(path: String): Boolean {
         val patterns = listOf(
-            Regex("""characters/[^/]+\\.json"""),
-            Regex("""stories/[^/]+\\.json"""),
-            Regex("""chats/[^/]+\\.jsonl"""),
-            Regex("""group-chats/[^/]+\\.jsonl"""),
-            Regex("""worldbooks/[^/]+\\.json"""),
-            Regex("""regex/[^/]+\\.json"""),
-            Regex("""regex/character-scripts/[^/]+\\.json"""),
-            Regex("""providers/[^/]+\\.json"""),
-            Regex("""app-data/(?:token-usage|message-images|files-index)\\.json"""),
-            Regex("""app-data/(?:other-tables|request-logs)\\.jsonl""")
+            Regex("""characters/[^/]+\.json"""),
+            Regex("""stories/[^/]+\.json"""),
+            Regex("""chats/[^/]+\.jsonl"""),
+            Regex("""group-chats/[^/]+\.jsonl"""),
+            Regex("""worldbooks/[^/]+\.json"""),
+            Regex("""regex/[^/]+\.json"""),
+            Regex("""regex/character-scripts/[^/]+\.json"""),
+            Regex("""providers/[^/]+\.json"""),
+            Regex("""app-data/(?:token-usage|message-images|files-index)\.json"""),
+            Regex("""app-data/(?:other-tables|request-logs)\.jsonl""")
         )
         return patterns.any { it.matches(path) }
     }
