@@ -215,6 +215,7 @@ class PortableBackupRepository(
             require(logsSchemaFile.isFile) { "The request-log database schema is missing." }
             applyEditableCharacterDocuments(stage)
             applyEditableWorldbookDocuments(stage)
+            applyEditableAttachmentDocuments(stage)
             applyEditableSettings(stage)
             val primaryRows = collectTableRows(stage, excludePath = "app-data/request-logs.jsonl")
             val requestRows = collectTableRows(stage, includePath = "app-data/request-logs.jsonl")
@@ -388,6 +389,103 @@ class PortableBackupRepository(
             tableRows.put("lorebook_entries", updatedEntries)
             writeText(file, document.toString(2))
         }
+    }
+
+    /**
+     * Reconcile edited attachment bytes with the content-addressed repository and file index.
+     * Category files are convenient aliases; when one is edited, its new digest becomes the
+     * authoritative hash referenced by the corresponding Room file row.
+     */
+    private fun applyEditableAttachmentDocuments(root: File) {
+        val indexFile = File(root, "app-data/files-index.json")
+        require(indexFile.isFile) { "The portable file index is missing." }
+        val indexDocument = JSONObject(indexFile.readText(Charsets.UTF_8))
+        val indexRows = indexDocument.getJSONObject(TABLE_ROWS_KEY).getJSONArray("files")
+        val rowsByUuid = linkedMapOf<String, JSONObject>()
+        val rowsByHash = linkedMapOf<String, MutableList<JSONObject>>()
+        indexRows.objects().forEach { row ->
+            val uuid = row.optString("uuid")
+            val hash = row.optString("hash")
+            require(uuid.isNotBlank() && hash.matches(Regex("(?i)[0-9a-f]{64}"))) {
+                "The portable file index contains an invalid file row."
+            }
+            rowsByUuid[uuid] = row
+            rowsByHash.getOrPut(hash.lowercase()) { mutableListOf() }.add(row)
+        }
+
+        val canonical = File(root, "attachments/other-files").apply { mkdirs() }
+        val digestByUuid = mutableMapOf<String, String>()
+        fun adoptAttachment(file: File, uuid: String, oldHash: String) {
+            val fileRow = rowsByUuid[uuid] ?: error("Attachment reference is missing from the file index.")
+            val digest = BackupArchiveFiles.sha256(file)
+            val previous = digestByUuid.putIfAbsent(uuid, digest)
+            require(previous == null || previous == digest) {
+                "Conflicting edited copies exist for attachment " + uuid
+            }
+            fileRow.put("hash", digest)
+            val destination = File(canonical, digest)
+            if (!destination.isFile || BackupArchiveFiles.sha256(destination) != digest) {
+                BackupArchiveFiles.copyFile(file, destination)
+            }
+            // Keep the old hash copy if another entity still references it; unused bytes are harmless.
+            if (oldHash.equals(digest, ignoreCase = true)) {
+                val original = File(canonical, oldHash)
+                if (!original.isFile) BackupArchiveFiles.copyFile(file, original)
+            }
+        }
+
+        // Canonical files are editable too: the filename identifies the original row even when
+        // the edited content no longer matches that original content-addressed filename.
+        canonical.listFiles().orEmpty().filter { it.isFile && it.name.matches(Regex("(?i)[0-9a-f]{64}")) }
+            .toList().forEach { file ->
+                val oldHash = file.name.lowercase()
+                rowsByHash[oldHash].orEmpty().forEach { row ->
+                    val digest = BackupArchiveFiles.sha256(file)
+                    row.put("hash", digest)
+                    val destination = File(canonical, digest)
+                    if (destination.canonicalFile != file.canonicalFile) {
+                        if (!destination.isFile || BackupArchiveFiles.sha256(destination) != digest) {
+                            BackupArchiveFiles.copyFile(file, destination)
+                        }
+                    }
+                }
+            }
+
+        File(root, "characters").listFiles().orEmpty()
+            .filter { it.isFile && it.extension == "json" }
+            .forEach { documentFile ->
+                val document = JSONObject(documentFile.readText(Charsets.UTF_8))
+                val row = document.optJSONObject(TABLE_ROWS_KEY)
+                    ?.optJSONArray("character")?.optJSONObject(0) ?: return@forEach
+                val avatarUuid = row.optString("avatar")
+                if (avatarUuid.isBlank()) return@forEach
+                val fileRow = rowsByUuid[avatarUuid] ?: return@forEach
+                val oldHash = fileRow.optString("hash")
+                val categoryFile = File(
+                    root,
+                    "attachments/characters/character-${row.optLong("id")}-avatar-$oldHash"
+                )
+                if (categoryFile.isFile) adoptAttachment(categoryFile, avatarUuid, oldHash)
+            }
+
+        val imageIndex = File(root, "app-data/message-images.json")
+        if (imageIndex.isFile) {
+            val imageDocument = JSONObject(imageIndex.readText(Charsets.UTF_8))
+            val imageRows = imageDocument.optJSONObject(TABLE_ROWS_KEY)?.optJSONArray("message_images")
+            imageRows?.objects()?.forEach { image ->
+                val uuid = image.optString("imageUuid")
+                val fileRow = rowsByUuid[uuid] ?: return@forEach
+                val oldHash = fileRow.optString("hash")
+                val categoryFile = File(
+                    root,
+                    "attachments/chat-images/${image.optString("messageType")}-" +
+                        "${image.optLong("messageId")}-${image.optInt("position")}-$oldHash"
+                )
+                if (categoryFile.isFile) adoptAttachment(categoryFile, uuid, oldHash)
+            }
+            writeText(imageIndex, imageDocument.toString(2))
+        }
+        writeText(indexFile, indexDocument.toString(2))
     }
 
     /**
