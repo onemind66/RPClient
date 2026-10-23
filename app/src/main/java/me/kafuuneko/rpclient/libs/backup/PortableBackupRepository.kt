@@ -808,6 +808,7 @@ class PortableBackupRepository(
             .filter { it.isFile && it.extension == "jsonl" }
             .forEach { file ->
                 val temporary = File.createTempFile("portable-group-chat-", ".jsonl", file.parentFile)
+                var hasHeader = false
                 try {
                     temporary.bufferedWriter(Charsets.UTF_8).use { writer ->
                         file.bufferedReader(Charsets.UTF_8).use { reader ->
