@@ -203,9 +203,10 @@ internal object BackupDatabaseCodec {
                     db.execSQL(item.getString("sql"))
                 }
             }
+            val normalizedRows = normalizeForeignKeyRows(db, tableRows)
             db.beginTransaction()
             try {
-                tableRows.forEach { (table, rows) ->
+                normalizedRows.forEach { (table, rows) ->
                     if (table != "search_chunks_fts" && !table.startsWith("search_chunks_fts_")) {
                         insertRows(db, table, rows)
                     }
@@ -240,6 +241,93 @@ internal object BackupDatabaseCodec {
             db.close()
         }
     }
+
+    /**
+     * Reconcile deliberately removed documents with their relational dependants before insertion.
+     * ON DELETE CASCADE rows are removed recursively; SET NULL relationships are detached. Other
+     * FK actions remain strict and reject an inconsistent archive rather than silently changing it.
+     */
+    private fun normalizeForeignKeyRows(
+        db: SQLiteDatabase,
+        source: Map<String, List<JSONObject>>
+    ): Map<String, List<JSONObject>> {
+        val rows = source.mapValuesTo(linkedMapOf()) { (_, values) -> values.toMutableList() }
+        val foreignKeys = linkedMapOf<String, List<ForeignKeyColumn>>()
+        rows.keys.toList().forEach { childTable ->
+            val grouped = linkedMapOf<Int, MutableList<ForeignKeyColumn>>()
+            db.rawQuery("PRAGMA foreign_key_list(" + quote(childTable) + ")", null).use { cursor ->
+                while (cursor.moveToNext()) {
+                    val fk = ForeignKeyColumn(
+                        id = cursor.getInt(cursor.getColumnIndexOrThrow("id")),
+                        sequence = cursor.getInt(cursor.getColumnIndexOrThrow("seq")),
+                        parentTable = cursor.getString(cursor.getColumnIndexOrThrow("table")),
+                        childColumn = cursor.getString(cursor.getColumnIndexOrThrow("from")),
+                        parentColumn = cursor.getString(cursor.getColumnIndexOrThrow("to")),
+                        onDelete = cursor.getString(cursor.getColumnIndexOrThrow("on_delete")).uppercase()
+                    )
+                    grouped.getOrPut(fk.id) { mutableListOf() }.add(fk)
+                }
+            }
+            foreignKeys[childTable] = grouped.values.map { it.sortedBy(ForeignKeyColumn::sequence) }
+                .flatten()
+        }
+
+        var changed: Boolean
+        do {
+            changed = false
+            foreignKeys.forEach { (childTable, columns) ->
+                val groups = columns.groupBy { it.id }.values
+                val childRows = rows[childTable] ?: return@forEach
+                val iterator = childRows.iterator()
+                while (iterator.hasNext()) {
+                    val child = iterator.next()
+                    var removeChild = false
+                    groups.forEach { group ->
+                        if (removeChild) return@forEach
+                        val first = group.first()
+                        val values = group.map { column ->
+                            child.opt(column.childColumn).takeUnless { it == null || it === JSONObject.NULL }
+                        }
+                        // SQLite treats any NULL component of a composite FK as non-referencing.
+                        if (values.any { it == null }) return@forEach
+                        val parentRows = rows[first.parentTable].orEmpty()
+                        val parentExists = parentRows.any { parent ->
+                            group.indices.all { index ->
+                                val parentValue = parent.opt(group[index].parentColumn)
+                                    .takeUnless { it == null || it === JSONObject.NULL }
+                                parentValue != null && parentValue.toString() == values[index].toString()
+                            }
+                        }
+                        if (!parentExists) {
+                            when (first.onDelete) {
+                                "CASCADE" -> removeChild = true
+                                "SET NULL" -> group.forEach { child.put(it.childColumn, JSONObject.NULL) }
+                                else -> error(
+                                    "Archive removes a referenced row: " + childTable + "." +
+                                        group.joinToString { it.childColumn } + " references " +
+                                        first.parentTable
+                                )
+                            }
+                        }
+                    }
+                    if (removeChild) {
+                        iterator.remove()
+                        changed = true
+                    }
+                }
+            }
+        } while (changed)
+        return rows.mapValues { (_, values) -> values.toList() }
+    }
+
+    private data class ForeignKeyColumn(
+        val id: Int,
+        val sequence: Int,
+        val parentTable: String,
+        val childColumn: String,
+        val parentColumn: String,
+        val onDelete: String
+    )
 
     /** 保留每列的 SQLite 类型，通过绑定参数写入业务行。 */
     private fun insertRows(db: SQLiteDatabase, table: String, rows: List<JSONObject>) {
