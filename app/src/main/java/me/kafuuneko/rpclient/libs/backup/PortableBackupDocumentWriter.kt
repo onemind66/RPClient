@@ -209,7 +209,7 @@ internal class PortableBackupDocumentWriter(
                             it.optString("messageType").equals("single", ignoreCase = true)
                     }.sortedBy { it.optInt("position") }
                     val images = attachments.mapNotNull { image ->
-                        val file = fileByUuid[image.optString("imageUuid")] ?: return@mapNotNull null
+                        val file = fileRows[image.optString("imageUuid")] ?: return@mapNotNull null
                         val asset = File(mRepository, file.optString("hash"))
                         if (!asset.isFile) return@mapNotNull null
                         ChatArchiveImage(

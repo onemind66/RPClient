@@ -35,6 +35,7 @@ import me.kafuuneko.rpclient.libs.backup.BackupDatabaseCodec.reconstructDatabase
 import me.kafuuneko.rpclient.libs.backup.BackupDatabaseCodec.schemaJson
 import me.kafuuneko.rpclient.libs.backup.BackupDatabaseCodec.tableNames
 import me.kafuuneko.rpclient.libs.backup.BackupDatabaseCodec.tableRows
+import me.kafuuneko.rpclient.libs.character.CharacterCardMapper
 import me.kafuuneko.rpclient.libs.character.LorebookCodec
 import me.kafuuneko.rpclient.libs.regex.RegexScriptCodec
 import me.kafuuneko.rpclient.libs.room.AppDatabase
