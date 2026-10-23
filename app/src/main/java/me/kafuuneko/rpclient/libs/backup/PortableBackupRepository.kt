@@ -1013,6 +1013,11 @@ class PortableBackupRepository(
                 val document = JSONObject(documentFile.readText(Charsets.UTF_8))
                 val row = document.optJSONObject(TABLE_ROWS_KEY)
                     ?.optJSONArray("character")?.optJSONObject(0) ?: return@forEach
+                val backgroundUuid = row.optString("backgroundFileUuid")
+                if (backgroundUuid.isNotBlank() && backgroundUuid !in rowsByUuid) {
+                    row.put("backgroundFileUuid", JSONObject.NULL)
+                    writeText(documentFile, document.toString(2))
+                }
                 val avatarUuid = row.optString("avatar")
                 if (avatarUuid.isBlank()) return@forEach
                 val fileRow = rowsByUuid[avatarUuid]
@@ -1020,11 +1025,6 @@ class PortableBackupRepository(
                     row.put("avatar", "")
                     writeText(documentFile, document.toString(2))
                     return@forEach
-                }
-                val backgroundUuid = row.optString("backgroundFileUuid")
-                if (backgroundUuid.isNotBlank() && backgroundUuid !in rowsByUuid) {
-                    row.put("backgroundFileUuid", JSONObject.NULL)
-                    writeText(documentFile, document.toString(2))
                 }
                 val oldHash = originalHashByUuid[avatarUuid] ?: fileRow.optString("hash")
                 val categoryFile = File(
