@@ -492,24 +492,44 @@ class PortableBackupRepository(
                     root,
                     "attachments/characters/character-${row.optLong("id")}-avatar-$oldHash"
                 )
-                if (categoryFile.isFile) adoptAttachment(categoryFile, avatarUuid, oldHash)
+                if (categoryFile.isFile) {
+                    adoptAttachment(categoryFile, avatarUuid, oldHash)
+                } else {
+                    // Removing the categorized avatar removes its reference, not unrelated shared files.
+                    row.put("avatar", "")
+                    writeText(documentFile, document.toString(2))
+                }
             }
 
         val imageIndex = File(root, "app-data/message-images.json")
         if (imageIndex.isFile) {
             val imageDocument = JSONObject(imageIndex.readText(Charsets.UTF_8))
-            val imageRows = imageDocument.optJSONObject(TABLE_ROWS_KEY)?.optJSONArray("message_images")
-            imageRows?.objects()?.forEach { image ->
+            val tableRows = imageDocument.optJSONObject(TABLE_ROWS_KEY)
+                ?: error("The portable message-image row data is missing.")
+            val imageRows = tableRows.optJSONArray("message_images") ?: JSONArray()
+            val retainedImages = JSONArray()
+            imageRows.objects().forEach { image ->
                 val uuid = image.optString("imageUuid")
-                val fileRow = rowsByUuid[uuid] ?: return@forEach
+                if (uuid.isBlank()) {
+                    retainedImages.put(image)
+                    return@forEach
+                }
+                val fileRow = rowsByUuid[uuid]
+                    ?: error("A message image references an unknown attachment: " + uuid)
                 val oldHash = originalHashByUuid[uuid] ?: fileRow.optString("hash")
                 val categoryFile = File(
                     root,
                     "attachments/chat-images/${image.optString("messageType")}-" +
                         "${image.optLong("messageId")}-${image.optInt("position")}-$oldHash"
                 )
-                if (categoryFile.isFile) adoptAttachment(categoryFile, uuid, oldHash)
+                if (categoryFile.isFile) {
+                    adoptAttachment(categoryFile, uuid, oldHash)
+                    retainedImages.put(image)
+                }
+                // A missing categorized image is an explicit delete from the portable document.
             }
+            tableRows.put("message_images", retainedImages)
+            imageDocument.put("images", retainedImages)
             writeText(imageIndex, imageDocument.toString(2))
         }
         rowsByUuid.forEach { (uuid, row) ->
