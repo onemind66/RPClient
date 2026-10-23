@@ -225,7 +225,6 @@ class PortableBackupRepository(
                 JSONObject(logsSchemaFile.readText(Charsets.UTF_8)), requestRows, stagedLogs
             )
 
-            applyEditableSettings(stage)
 
             replaceLiveData(
                 rollback, stagedPrimary, stagedLogs,
