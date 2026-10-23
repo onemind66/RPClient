@@ -35,6 +35,7 @@ import me.kafuuneko.rpclient.libs.backup.BackupDatabaseCodec.schemaJson
 import me.kafuuneko.rpclient.libs.backup.BackupDatabaseCodec.tableNames
 import me.kafuuneko.rpclient.libs.backup.BackupDatabaseCodec.tableRows
 import me.kafuuneko.rpclient.libs.character.CharacterCardMapper
+import me.kafuuneko.rpclient.libs.character.LorebookCodec
 import me.kafuuneko.rpclient.libs.room.AppDatabase
 import me.kafuuneko.rpclient.libs.room.RequestLogDatabase
 import org.json.JSONArray
@@ -213,6 +214,7 @@ class PortableBackupRepository(
             require(primarySchemaFile.isFile) { "The primary database schema is missing." }
             require(logsSchemaFile.isFile) { "The request-log database schema is missing." }
             applyEditableCharacterDocuments(stage)
+            applyEditableWorldbookDocuments(stage)
             applyEditableSettings(stage)
             val primaryRows = collectTableRows(stage, excludePath = "app-data/request-logs.jsonl")
             val requestRows = collectTableRows(stage, includePath = "app-data/request-logs.jsonl")
@@ -306,6 +308,50 @@ class PortableBackupRepository(
                 characterRows.put(0, JSONObject(gson.toJson(updated)))
                 writeText(file, document.toString(2))
             }
+    }
+
+    /**
+     * Synchronize standard SillyTavern worldbook fields and entries into their preserved Room rows.
+     * Entry IDs are retained by their exported order where possible; new entries receive IDs above
+     * the current archived maximum so they cannot collide with existing primary keys.
+     */
+    private fun applyEditableWorldbookDocuments(root: File) {
+        val gson = Gson()
+        val codec = LorebookCodec(gson)
+        val files = File(root, "worldbooks").listFiles().orEmpty()
+            .filter { it.isFile && it.extension == "json" }
+        var nextEntryId = files.mapNotNull { file ->
+            runCatching {
+                JSONObject(file.readText(Charsets.UTF_8))
+                    .getJSONObject(TABLE_ROWS_KEY).getJSONArray("lorebook_entries")
+                    .objects().maxOfOrNull { it.optLong("id") }
+            }.getOrNull()
+        }.maxOrNull()?.plus(1L) ?: 1L
+
+        files.forEach { file ->
+            val document = JSONObject(file.readText(Charsets.UTF_8))
+            val tableRows = document.optJSONObject(TABLE_ROWS_KEY) ?: return@forEach
+            val bookRows = tableRows.optJSONArray("lorebooks") ?: return@forEach
+            require(bookRows.length() == 1) {
+                "Each worldbook document must contain exactly one worldbook row: " + file.name
+            }
+            val originalBook = bookRows.getJSONObject(0)
+            val bookId = originalBook.optLong("id")
+            val parsed = codec.parseLorebook(document.toString())
+            val updatedBook = parsed.lorebook.copy(id = bookId)
+            bookRows.put(0, JSONObject(gson.toJson(updatedBook)))
+
+            val existingEntries = (tableRows.optJSONArray("lorebook_entries") ?: JSONArray())
+                .objects().sortedWith(compareBy<JSONObject> { it.optInt("order") }.thenBy { it.optLong("id") })
+            val updatedEntries = JSONArray()
+            parsed.entries.forEachIndexed { index, entry ->
+                val original = existingEntries.getOrNull(index)
+                val id = original?.optLong("id")?.takeIf { it > 0L } ?: nextEntryId++
+                updatedEntries.put(JSONObject(gson.toJson(entry.copy(id = id, lorebookId = bookId))))
+            }
+            tableRows.put("lorebook_entries", updatedEntries)
+            writeText(file, document.toString(2))
+        }
     }
 
     /**
