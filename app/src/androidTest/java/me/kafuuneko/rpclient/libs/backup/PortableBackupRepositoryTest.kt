@@ -160,6 +160,47 @@ class PortableBackupRepositoryTest {
         }.isFailure)
     }
 
+    /** Removing a character document cascades to sessions that require that character. */
+    @Test
+    fun deletingCharacterDocumentRemovesDependentSessions() = runBlocking {
+        primary.openHelper.writableDatabase.execSQL(
+            "INSERT INTO character (" +
+                "id, name, avatar, characterTags, description, creatorNotes, personality, scenario, " +
+                "firstMessages, examplesOfDialogue, postHistoryInstructions, systemPrompt, creator, " +
+                "characterVersion, alternateGreetings, extensionsJson, depthPromptPrompt, " +
+                "depthPromptDepth, depthPromptRole, characterLorebookId, backgroundFileUuid" +
+                ") VALUES (1, 'Character to delete', '', '[]', '', '', '', '', '', '', '', '', '', '', " +
+                "'[]', '{}', '', 4, 0, 0, NULL)"
+        )
+        primary.openHelper.writableDatabase.execSQL(
+            "INSERT INTO chat_sessions (" +
+                "id, characterId, createTime, latestTime, lorebookEntrySet, title, userNote, " +
+                "userName, userDescription, creatorNotes, worldInfoStateJson, autoSummaryPaused" +
+                ") VALUES (7, 1, 1, 1, '[]', 'Dependent chat', '', 'User', '', NULL, '{}', 0)"
+        )
+        val archive = File(root, "deleted-character.zip")
+        val repository = PortableBackupRepository(
+            context, primary, logs, BackupArchiveRepository(context, primary)
+        )
+        repository.exportArchive(Uri.fromFile(archive))
+
+        val unpacked = File(root, "deleted-character").apply { mkdirs() }
+        BackupArchiveFiles.extractArchive(context, Uri.fromFile(archive), unpacked)
+        assertTrue(File(unpacked, "characters/character-1.json").delete())
+        repackDirectory(unpacked, archive)
+
+        repository.restoreArchive(Uri.fromFile(archive))
+        openDatabases()
+        primary.openHelper.readableDatabase.query("SELECT COUNT(*) FROM character").use {
+            assertTrue(it.moveToFirst())
+            assertEquals(0L, it.getLong(0))
+        }
+        primary.openHelper.readableDatabase.query("SELECT COUNT(*) FROM chat_sessions").use {
+            assertTrue(it.moveToFirst())
+            assertEquals(0L, it.getLong(0))
+        }
+    }
+
     /** A newly added standard Character Card V2 document is imported without private row metadata. */
     @Test
     fun addedCharacterCardDocumentIsImported() = runBlocking {
