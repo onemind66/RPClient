@@ -707,6 +707,7 @@ class PortableBackupRepository(
                 "An edited attachment is missing or has an invalid digest: " + uuid
             }
         }
+        indexDocument.put("files", indexRows)
         writeText(indexFile, indexDocument.toString(2))
     }
 
