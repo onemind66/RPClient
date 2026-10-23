@@ -219,6 +219,7 @@ class PortableBackupRepository(
             require(logsSchemaFile.isFile) { "The request-log database schema is missing." }
             applyEditableCharacterDocuments(stage)
             applyEditableWorldbookDocuments(stage)
+            applyEditableStoryDocuments(stage)
             applyEditableChatDocuments(stage)
             applyEditableAttachmentDocuments(stage)
             applyEditableSettings(stage)
@@ -400,6 +401,121 @@ class PortableBackupRepository(
                 updatedEntries.put(JSONObject(gson.toJson(entry.copy(id = id, lorebookId = bookId))))
             }
             tableRows.put("lorebook_entries", updatedEntries)
+            writeText(file, document.toString(2))
+        }
+    }
+
+    /**
+     * Synchronize the standard RPClient story archive payload into its Room rows. Array order in
+     * the editable document is authoritative for volumes and chapters; IDs are retained by position
+     * where possible, and new records receive unique IDs.
+     */
+    private fun applyEditableStoryDocuments(root: File) {
+        val files = File(root, "stories").listFiles().orEmpty()
+            .filter { it.isFile && it.name.endsWith(".json") }
+        fun allRows(table: String): List<JSONObject> = files.flatMap { file ->
+            runCatching {
+                JSONObject(file.readText(Charsets.UTF_8)).getJSONObject(TABLE_ROWS_KEY)
+                    .optJSONArray(table)?.objects().orEmpty()
+            }.getOrDefault(emptyList())
+        }
+        val usedStoryIds = allRows("stories").map { it.optLong("id") }.filter { it > 0L }.toMutableSet()
+        var nextStoryId = (usedStoryIds.maxOrNull() ?: 0L) + 1L
+        var nextVolumeId = (allRows("story_volumes").maxOfOrNull { it.optLong("id") } ?: 0L) + 1L
+        var nextChapterId = (allRows("story_chapters").maxOfOrNull { it.optLong("id") } ?: 0L) + 1L
+
+        files.forEach { file ->
+            val document = JSONObject(file.readText(Charsets.UTF_8))
+            val archivedStory = document.optJSONObject("story")
+                ?: error("Story document is missing its story object: " + file.name)
+            val tableRows = document.optJSONObject(TABLE_ROWS_KEY) ?: JSONObject().also {
+                document.put(TABLE_ROWS_KEY, it)
+            }
+            val storyRows = tableRows.optJSONArray("stories") ?: JSONArray().also {
+                tableRows.put("stories", it)
+            }
+            require(storyRows.length() <= 1) { "Story document must contain at most one story row." }
+            val oldStory = storyRows.optJSONObject(0)
+            val storyId = oldStory?.optLong("id")?.takeIf { it > 0L } ?: nextStoryId++
+            if (oldStory == null) require(usedStoryIds.add(storyId)) {
+                "Duplicate story ID in " + file.name
+            }
+            val storyRow = oldStory ?: JSONObject()
+            storyRow.put("id", storyId)
+                .put("title", archivedStory.optString("title"))
+                .put("memory", archivedStory.optString("memory"))
+                .put("summary", archivedStory.optString("summary"))
+                .put("authorNote", archivedStory.optString("authorNote"))
+                .put("includeUserPersona", archivedStory.optBoolean("includeUserPersona"))
+            if (oldStory == null) {
+                val now = System.currentTimeMillis()
+                storyRow.put("worldInfoGenerationStep", 0)
+                    .put("revision", 0L)
+                    .put("createTime", now)
+                    .put("latestTime", now)
+                storyRows.put(storyRow)
+            } else {
+                storyRows.put(0, storyRow)
+            }
+
+            val oldVolumes = (tableRows.optJSONArray("story_volumes") ?: JSONArray())
+                .objects().sortedBy { it.optInt("sortOrder") }
+            val oldChapters = (tableRows.optJSONArray("story_chapters") ?: JSONArray()).objects()
+            val oldUngrouped = oldChapters.filter { it.isNull("volumeId") }
+                .sortedBy { it.optInt("sortOrder") }
+            val visibleVolumes = archivedStory.optJSONArray("volumes") ?: JSONArray()
+            val visibleUngrouped = archivedStory.optJSONArray("ungroupedChapters") ?: JSONArray()
+            val updatedVolumes = JSONArray()
+            val volumeIds = mutableListOf<Long>()
+            for (index in 0 until visibleVolumes.length()) {
+                val visible = visibleVolumes.getJSONObject(index)
+                val old = oldVolumes.getOrNull(index)
+                val volumeId = old?.optLong("id")?.takeIf { it > 0L } ?: nextVolumeId++
+                val row = (old ?: JSONObject())
+                    .put("id", volumeId)
+                    .put("storyId", storyId)
+                    .put("title", visible.optString("title"))
+                    .put("sortOrder", index)
+                updatedVolumes.put(row)
+                volumeIds += volumeId
+            }
+
+            val updatedChapters = JSONArray()
+            fun appendChapters(visibleChapters: JSONArray, oldGroup: List<JSONObject>, volumeId: Long?) {
+                for (index in 0 until visibleChapters.length()) {
+                    val visible = visibleChapters.getJSONObject(index)
+                    val old = oldGroup.getOrNull(index)
+                    val now = System.currentTimeMillis()
+                    val row = (old ?: JSONObject())
+                        .put("id", old?.optLong("id")?.takeIf { it > 0L } ?: nextChapterId++)
+                        .put("storyId", storyId)
+                        .put("volumeId", volumeId ?: JSONObject.NULL)
+                        .put("title", visible.optString("title"))
+                        .put("content", visible.optString("content"))
+                        .put("continuationGuidance", visible.optString("continuationGuidance"))
+                        .put("sortOrder", index)
+                    if (old == null) {
+                        row.put("contentRevision", 0L).put("createTime", now).put("latestTime", now)
+                    }
+                    updatedChapters.put(row)
+                }
+            }
+            appendChapters(visibleUngrouped, oldUngrouped, null)
+            for (index in 0 until visibleVolumes.length()) {
+                val visible = visibleVolumes.getJSONObject(index)
+                val oldVolume = oldVolumes.getOrNull(index)
+                val oldVolumeId = oldVolume?.optLong("id")
+                val oldGroup = if (oldVolumeId == null) emptyList() else oldChapters
+                    .filter { !it.isNull("volumeId") && it.optLong("volumeId") == oldVolumeId }
+                    .sortedBy { it.optInt("sortOrder") }
+                appendChapters(
+                    visible.optJSONArray("chapters") ?: JSONArray(),
+                    oldGroup,
+                    volumeIds[index]
+                )
+            }
+            tableRows.put("story_volumes", updatedVolumes)
+            tableRows.put("story_chapters", updatedChapters)
             writeText(file, document.toString(2))
         }
     }
