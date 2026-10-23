@@ -342,6 +342,14 @@ class PortableBackupRepository(
         val codec = LorebookCodec(gson)
         val files = File(root, "worldbooks").listFiles().orEmpty()
             .filter { it.isFile && it.extension == "json" }
+        val usedBookIds = files.mapNotNull { file ->
+            runCatching {
+                JSONObject(file.readText(Charsets.UTF_8))
+                    .getJSONObject(TABLE_ROWS_KEY).getJSONArray("lorebooks")
+                    .getJSONObject(0).optLong("id")
+            }.getOrNull()?.takeIf { it > 0L }
+        }.toMutableSet()
+        var nextBookId = (usedBookIds.maxOrNull() ?: 0L) + 1L
         var nextEntryId = files.mapNotNull { file ->
             runCatching {
                 JSONObject(file.readText(Charsets.UTF_8))
@@ -352,16 +360,22 @@ class PortableBackupRepository(
 
         files.forEach { file ->
             val document = JSONObject(file.readText(Charsets.UTF_8))
-            val tableRows = document.optJSONObject(TABLE_ROWS_KEY) ?: return@forEach
-            val bookRows = tableRows.optJSONArray("lorebooks") ?: return@forEach
-            require(bookRows.length() == 1) {
-                "Each worldbook document must contain exactly one worldbook row: " + file.name
+            val tableRows = document.optJSONObject(TABLE_ROWS_KEY) ?: JSONObject().also {
+                document.put(TABLE_ROWS_KEY, it)
             }
-            val originalBook = bookRows.getJSONObject(0)
-            val bookId = originalBook.optLong("id")
+            val bookRows = tableRows.optJSONArray("lorebooks") ?: JSONArray().also {
+                tableRows.put("lorebooks", it)
+            }
+            require(bookRows.length() <= 1) {
+                "Each worldbook document must contain at most one worldbook row: " + file.name
+            }
+            val originalBook = bookRows.optJSONObject(0)
             val parsed = codec.parseLorebook(document.toString())
-            val updatedBook = parsed.lorebook.copy(id = bookId)
-            bookRows.put(0, JSONObject(gson.toJson(updatedBook)))
+            val bookId = originalBook?.optLong("id")?.takeIf { it > 0L } ?: nextBookId++
+            if (originalBook == null) {
+                require(usedBookIds.add(bookId)) { "Duplicate worldbook ID in " + file.name }
+            }
+            bookRows.put(0, JSONObject(gson.toJson(parsed.lorebook.copy(id = bookId))))
 
             val existingEntries = (tableRows.optJSONArray("lorebook_entries") ?: JSONArray())
                 .objects().sortedWith(compareBy<JSONObject> { it.optInt("order") }.thenBy { it.optLong("id") })
