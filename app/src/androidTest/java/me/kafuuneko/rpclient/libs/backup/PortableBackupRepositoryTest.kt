@@ -151,6 +151,40 @@ class PortableBackupRepositoryTest {
         }.isFailure)
     }
 
+    /** Standard SillyTavern worldbook fields override the preserved internal row during restore. */
+    @Test
+    fun editableWorldbookFieldsAreRestored() = runBlocking {
+        primary.openHelper.writableDatabase.execSQL(
+            "INSERT INTO lorebooks " +
+                "(id, name, description, scanDepth, tokenBudget, recursiveScanning, extensionsJson) " +
+                "VALUES (11, 'Original worldbook', 'Original description', 2, 0, 0, '{}')"
+        )
+        val archive = File(root, "editable-worldbook.zip")
+        val repository = PortableBackupRepository(
+            context, primary, logs, BackupArchiveRepository(context, primary)
+        )
+        repository.exportArchive(Uri.fromFile(archive))
+
+        val unpacked = File(root, "editable-worldbook").apply { mkdirs() }
+        BackupArchiveFiles.extractArchive(context, Uri.fromFile(archive), unpacked)
+        val worldbookFile = File(unpacked, "worldbooks/worldbook-11.json")
+        val document = JSONObject(worldbookFile.readText())
+        document.put("name", "Edited worldbook")
+        document.put("description", "Edited description")
+        worldbookFile.writeText(document.toString(2))
+        repackDirectory(unpacked, archive)
+
+        repository.restoreArchive(Uri.fromFile(archive))
+        openDatabases()
+        primary.openHelper.readableDatabase.query(
+            "SELECT name, description FROM lorebooks WHERE id = 11"
+        ).use {
+            assertTrue(it.moveToFirst())
+            assertEquals("Edited worldbook", it.getString(0))
+            assertEquals("Edited description", it.getString(1))
+        }
+    }
+
     /** Standard Character Card V2 edits override the preserved internal row during restore. */
     @Test
     fun editableCharacterCardFieldsAreRestored() = runBlocking {
