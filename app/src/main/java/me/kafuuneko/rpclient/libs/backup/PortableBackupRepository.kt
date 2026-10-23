@@ -8,6 +8,7 @@ import com.google.gson.Gson
 import androidx.sqlite.db.SupportSQLiteDatabase
 import java.io.File
 import java.io.FileInputStream
+import java.time.Instant
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import org.xmlpull.v1.XmlSerializer
@@ -218,6 +219,7 @@ class PortableBackupRepository(
             require(logsSchemaFile.isFile) { "The request-log database schema is missing." }
             applyEditableCharacterDocuments(stage)
             applyEditableWorldbookDocuments(stage)
+            applyEditableChatDocuments(stage)
             applyEditableAttachmentDocuments(stage)
             applyEditableSettings(stage)
             val primaryRows = collectTableRows(stage, excludePath = "app-data/request-logs.jsonl")
@@ -399,6 +401,169 @@ class PortableBackupRepository(
             }
             tableRows.put("lorebook_entries", updatedEntries)
             writeText(file, document.toString(2))
+        }
+    }
+
+    /**
+     * Synchronize visible SillyTavern JSONL fields into the hidden lossless Room rows. The file is
+     * processed in two streaming passes so large conversations are not retained in memory.
+     */
+    private fun applyEditableChatDocuments(root: File) {
+        val files = File(root, "chats").listFiles().orEmpty()
+            .filter { it.isFile && it.extension == "jsonl" }
+        var nextSessionId = 1L
+        var nextMessageId = 1L
+        files.forEach { file ->
+            file.forEachLine(Charsets.UTF_8) { line ->
+                if (line.isBlank()) return@forEachLine
+                val document = JSONObject(line)
+                val tableRows = document.optJSONObject(TABLE_ROWS_KEY) ?: return@forEachLine
+                tableRows.optJSONArray("chat_sessions")?.objects()?.forEach {
+                    nextSessionId = maxOf(nextSessionId, it.optLong("id") + 1L)
+                }
+                tableRows.optJSONArray("chat_messages")?.objects()?.forEach {
+                    nextMessageId = maxOf(nextMessageId, it.optLong("id") + 1L)
+                }
+            }
+        }
+        val characterRows = File(root, "characters").listFiles().orEmpty()
+            .filter { it.isFile && it.extension == "json" }
+            .flatMap { file ->
+                runCatching {
+                    JSONObject(file.readText(Charsets.UTF_8)).getJSONObject(TABLE_ROWS_KEY)
+                        .getJSONArray("character").objects()
+                }.getOrDefault(emptyList())
+            }
+
+        files.forEach { file ->
+            val temporary = File.createTempFile("portable-chat-", ".jsonl", file.parentFile)
+            try {
+                val headerText = file.bufferedReader(Charsets.UTF_8).use { it.readLine() }
+                    ?: error("Chat document is empty: " + file.name)
+                val header = JSONObject(headerText)
+                val headerExtension = header.optJSONObject("chat_metadata")
+                    ?.optJSONObject("rpclient")
+                val existingSession = header.optJSONObject(TABLE_ROWS_KEY)
+                    ?.optJSONArray("chat_sessions")?.optJSONObject(0)
+                val isNewSession = existingSession == null
+                val session = existingSession ?: run {
+                    val characterName = headerExtension?.optJSONObject("character")?.optString("name")
+                        .orEmpty().ifBlank { header.optString("character_name") }
+                    val matches = characterRows.filter { it.optString("name") == characterName }
+                    require(matches.size == 1) {
+                        "Added chat document must identify exactly one existing character: " + file.name
+                    }
+                    JSONObject()
+                        .put("id", nextSessionId++)
+                        .put("characterId", matches.single().optLong("id"))
+                        .put("createTime", headerExtension?.optLong("create_time") ?: System.currentTimeMillis())
+                        .put("latestTime", headerExtension?.optLong("latest_time") ?: System.currentTimeMillis())
+                        .put("lorebookEntrySet", headerExtension?.optString("lorebook_entry_set") ?: "[]")
+                        .put("title", headerExtension?.optString("title") ?: file.nameWithoutExtension)
+                        .put("userNote", headerExtension?.optString("user_note") ?: "")
+                        .put("userName", headerExtension?.optString("user_name")
+                            ?: header.optString("user_name", "User"))
+                        .put("userDescription", headerExtension?.optString("user_description") ?: "")
+                        .put("creatorNotes", headerExtension?.optString("creator_notes") ?: JSONObject.NULL)
+                        .put("worldInfoStateJson", headerExtension?.optString("world_info_state") ?: "{}")
+                        .put("autoSummaryPaused", headerExtension?.optBoolean("auto_summary_paused") ?: false)
+                }
+                val oldSessionId = session.optLong("id")
+                val oldHeaderRows = header.optJSONObject(TABLE_ROWS_KEY)
+                val oldSummary = oldHeaderRows?.optJSONArray("chat_messages")?.objects()
+                    ?.firstOrNull { it.optString("source").equals("Summary", true) }
+
+                val messageIds = mutableListOf<Long>()
+                file.bufferedReader(Charsets.UTF_8).use { reader ->
+                    reader.readLine()
+                    reader.forEachLine { line ->
+                        if (line.isBlank()) return@forEachLine
+                        val message = JSONObject(line)
+                        val oldRow = message.optJSONObject(TABLE_ROWS_KEY)
+                            ?.optJSONArray("chat_messages")?.optJSONObject(0)
+                        val id = if (!isNewSession && oldRow != null && oldRow.optLong("id") > 0L) {
+                            oldRow.optLong("id")
+                        } else nextMessageId++
+                        messageIds += id
+                    }
+                }
+
+                val summaryMetadata = headerExtension?.optJSONObject("summary")
+                val summaryRow = if (summaryMetadata != null) {
+                    val coveredIndex = summaryMetadata.optInt("covered_message_index", -1)
+                    val coveredId = if (coveredIndex in messageIds.indices) messageIds[coveredIndex] else 0L
+                    (oldSummary ?: JSONObject().put("id", nextMessageId++))
+                        .put("sessionId", session.optLong("id"))
+                        .put("createTime", summaryMetadata.optLong("create_time"))
+                        .put("source", "Summary")
+                        .put("content", summaryMetadata.optString("content"))
+                        .put("coveredMessageId", coveredId)
+                } else null
+
+                fun setString(key: String, column: String) {
+                    val value = headerExtension?.optString(key) ?: return
+                    session.put(column, value)
+                }
+                fun setLong(key: String, column: String) {
+                    if (headerExtension?.has(key) == true) session.put(column, headerExtension.optLong(key))
+                }
+                fun setBoolean(key: String, column: String) {
+                    if (headerExtension?.has(key) == true) session.put(column, headerExtension.optBoolean(key))
+                }
+                setString("title", "title")
+                setLong("create_time", "createTime")
+                setLong("latest_time", "latestTime")
+                setString("user_name", "userName")
+                setString("user_description", "userDescription")
+                setString("user_note", "userNote")
+                setString("creator_notes", "creatorNotes")
+                setString("lorebook_entry_set", "lorebookEntrySet")
+                setString("world_info_state", "worldInfoStateJson")
+                setBoolean("auto_summary_paused", "autoSummaryPaused")
+
+                val outputHeaderRows = JSONObject()
+                    .put("chat_sessions", JSONArray().put(session))
+                    .put("chat_messages", JSONArray().apply { summaryRow?.let { put(it) } })
+                header.put(TABLE_ROWS_KEY, outputHeaderRows)
+                temporary.bufferedWriter(Charsets.UTF_8).use { writer ->
+                    writeJsonLine(header, writer)
+                    file.bufferedReader(Charsets.UTF_8).use { reader ->
+                        reader.readLine()
+                        var messageIndex = 0
+                        reader.forEachLine { line ->
+                            if (line.isBlank()) return@forEachLine
+                            val document = JSONObject(line)
+                            val oldRow = document.optJSONObject(TABLE_ROWS_KEY)
+                                ?.optJSONArray("chat_messages")?.optJSONObject(0)
+                            val isUser = document.optBoolean("is_user")
+                            val extraType = document.optJSONObject("extra")?.optString("type")
+                            val source = when {
+                                isUser -> "User"
+                                document.optBoolean("is_system") ||
+                                    extraType.equals("narrator", ignoreCase = true) -> "System"
+                                else -> "Char"
+                            }
+                            val visibleTime = runCatching {
+                                Instant.parse(document.optString("send_date")).toEpochMilli()
+                            }.getOrNull()
+                            val row = (oldRow ?: JSONObject())
+                                .put("id", messageIds[messageIndex])
+                                .put("sessionId", session.optLong("id"))
+                                .put("createTime", visibleTime ?: oldRow?.optLong("createTime") ?: System.currentTimeMillis())
+                                .put("source", source)
+                                .put("content", document.optString("message"))
+                                .put("coveredMessageId", JSONObject.NULL)
+                            document.put(TABLE_ROWS_KEY, tableRows("chat_messages" to JSONArray().put(row)))
+                            writeJsonLine(document, writer)
+                            messageIndex++
+                        }
+                    }
+                }
+                require(file.delete()) { "Could not replace chat document: " + file.name }
+                require(temporary.renameTo(file)) { "Could not finalize chat document: " + file.name }
+            } finally {
+                temporary.delete()
+            }
         }
     }
 
