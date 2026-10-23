@@ -172,7 +172,7 @@ class PortableBackupRepositoryTest {
         val unpacked = File(root, "added-character").apply { mkdirs() }
         BackupArchiveFiles.extractArchive(context, Uri.fromFile(archive), unpacked)
         val added = JSONObject(File(unpacked, "characters/character-1.json").readText())
-        added.remove(TABLE_ROWS_KEY)
+        added.remove("_tableRows")
         added.getJSONObject("data").put("name", "Newly added character")
         File(unpacked, "characters/character-added.json").writeText(added.toString(2))
         repackDirectory(unpacked, archive)
