@@ -18,7 +18,7 @@ import me.kafuuneko.rpclient.libs.backup.BackupArchiveFiles.copyDirectory
 import me.kafuuneko.rpclient.libs.backup.BackupArchiveFiles.copyFile
 import me.kafuuneko.rpclient.libs.backup.BackupArchiveFiles.extractArchive
 import me.kafuuneko.rpclient.libs.backup.BackupArchiveFiles.sha256
-import me.kafuuneko.rpclient.libs.backup.BackupArchiveFiles.validateChecksums
+import me.kafuuneko.rpclient.libs.backup.BackupArchiveFiles.validateEditableInventory
 import me.kafuuneko.rpclient.libs.backup.BackupArchiveFiles.writeJsonLine
 import me.kafuuneko.rpclient.libs.backup.BackupArchiveFiles.writeText
 import me.kafuuneko.rpclient.libs.backup.BackupArchiveFormat.BUFFER_SIZE
