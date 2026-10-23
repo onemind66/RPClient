@@ -1,7 +1,6 @@
 package me.kafuuneko.rpclient.libs.backup
 
 import androidx.sqlite.db.SupportSQLiteDatabase
-import android.util.Base64
 import com.google.gson.Gson
 import java.io.File
 import java.io.StringWriter
@@ -149,7 +148,6 @@ internal class PortableBackupDocumentWriter(
         val imageRows = rows("message_images").objects()
         val fileRows = rows("files").objects().associateBy { it.optString("uuid") }
         val characters = rows("character").objects().associateBy { it.optLong("id") }
-        val fileByUuid = fileRows
         own("chat_sessions", "chat_messages")
         chatSessions.objects().forEach { session ->
             val sessionId = session.optLong("id")
