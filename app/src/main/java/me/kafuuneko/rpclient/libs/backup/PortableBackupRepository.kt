@@ -67,7 +67,10 @@ class PortableBackupRepository(
             primaryDb.beginTransaction()
             try {
                 writeText(File(stage, "app-data/database-schema.json"), schemaJson(primaryDb).toString(2))
-                PortableBackupDocumentWriter(primaryDb, primaryTables, stage).writeAll()
+                PortableBackupDocumentWriter(
+                    primaryDb, primaryTables, stage,
+                    mContext.getDir("repository", Context.MODE_PRIVATE)
+                ).writeAll()
                 exportAttachments(primaryDb, primaryTables, stage)
                 primaryDb.setTransactionSuccessful()
             } finally {
