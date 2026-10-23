@@ -223,6 +223,7 @@ class PortableBackupRepository(
             applyEditableRegexDocuments(stage)
             applyEditableStoryDocuments(stage)
             applyEditableChatDocuments(stage)
+            applyEditableGroupChatDocuments(stage)
             applyEditableAttachmentDocuments(stage)
             applyEditableSettings(stage)
             val primaryRows = reconcileMessageImageRows(
@@ -796,6 +797,58 @@ class PortableBackupRepository(
                 temporary.delete()
             }
         }
+    }
+
+    /**
+     * Keep the group-chat document's visible session/member/summary/message objects authoritative
+     * over their duplicate row snapshots, so edits and removed JSONL message lines are respected.
+     */
+    private fun applyEditableGroupChatDocuments(root: File) {
+        File(root, "group-chats").listFiles().orEmpty()
+            .filter { it.isFile && it.extension == "jsonl" }
+            .forEach { file ->
+                val temporary = File.createTempFile("portable-group-chat-", ".jsonl", file.parentFile)
+                try {
+                    temporary.bufferedWriter(Charsets.UTF_8).use { writer ->
+                        file.bufferedReader(Charsets.UTF_8).use { reader ->
+                            var isHeader = true
+                            reader.forEachLine { line ->
+                                if (line.isBlank()) return@forEachLine
+                                val document = JSONObject(line)
+                                val tableRows = document.optJSONObject(TABLE_ROWS_KEY) ?: JSONObject().also {
+                                    document.put(TABLE_ROWS_KEY, it)
+                                }
+                                if (isHeader) {
+                                    val session = document.optJSONObject("session")
+                                        ?: error("Group-chat header is missing its session: " + file.name)
+                                    tableRows.put("group_chat_sessions", JSONArray().put(session))
+                                    val members = document.optJSONArray("members") ?: JSONArray()
+                                    val summaries = document.optJSONArray("summaries") ?: JSONArray()
+                                    tableRows.put("group_chat_members", members)
+                                    tableRows.put("group_chat_summaries", summaries)
+                                    document.put("members", members).put("summaries", summaries)
+                                    isHeader = false
+                                } else {
+                                    val message = document.optJSONObject("message")
+                                        ?: error("Group-chat message line is malformed: " + file.name)
+                                    tableRows.put("group_chat_messages", JSONArray().put(message))
+                                }
+                                document.put(TABLE_ROWS_KEY, tableRows)
+                                writeJsonLine(document, writer)
+                            }
+                        }
+                    }
+                    require(!file.readLines(Charsets.UTF_8).firstOrNull().isNullOrBlank()) {
+                        "Group-chat document is empty: " + file.name
+                    }
+                    require(file.delete()) { "Could not replace group-chat document: " + file.name }
+                    require(temporary.renameTo(file)) {
+                        "Could not finalize group-chat document: " + file.name
+                    }
+                } finally {
+                    temporary.delete()
+                }
+            }
     }
 
     /**
