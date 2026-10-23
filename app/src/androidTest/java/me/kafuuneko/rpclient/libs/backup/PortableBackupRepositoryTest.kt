@@ -151,6 +151,44 @@ class PortableBackupRepositoryTest {
         }.isFailure)
     }
 
+    /** settings.json edits are applied even when the archived raw XML still has the old values. */
+    @Test
+    fun editableSettingsJsonOverridesRawPreferenceXml() = runBlocking {
+        val archive = File(root, "editable-settings.zip")
+        val repository = PortableBackupRepository(
+            context, primary, logs, BackupArchiveRepository(context, primary)
+        )
+        repository.exportArchive(Uri.fromFile(archive))
+
+        val unpacked = File(root, "editable-settings").apply { mkdirs() }
+        BackupArchiveFiles.extractArchive(context, Uri.fromFile(archive), unpacked)
+        val settingsFile = File(unpacked, "settings.json")
+        val settings = JSONObject(settingsFile.readText())
+        settings.getJSONObject("preferences")
+            .put("backup-test-preferences", JSONObject().put("editableKey", "edited in JSON"))
+        settingsFile.writeText(settings.toString(2))
+        repackDirectory(unpacked, archive)
+
+        repository.restoreArchive(Uri.fromFile(archive))
+        assertEquals(
+            "edited in JSON",
+            context.getSharedPreferences("backup-test-preferences", Context.MODE_PRIVATE)
+                .getString("editableKey", null)
+        )
+    }
+
+    /** Repack a staged directory without recalculating export-time manifest digests. */
+    private fun repackDirectory(source: File, destination: File) {
+        ZipOutputStream(destination.outputStream()).use { zip ->
+            source.walkTopDown().drop(1).forEach { file ->
+                val name = file.relativeTo(source).invariantSeparatorsPath
+                zip.putNextEntry(ZipEntry(if (file.isDirectory) "$name/" else name))
+                if (file.isFile) file.inputStream().use { it.copyTo(zip) }
+                zip.closeEntry()
+            }
+        }
+    }
+
     /** 无效归档必须在关闭或覆盖任何当前数据库之前拒绝. */
     @Test
     fun invalidArchiveLeavesLiveDataReadable() = runBlocking {
