@@ -1015,7 +1015,17 @@ class PortableBackupRepository(
                     ?.optJSONArray("character")?.optJSONObject(0) ?: return@forEach
                 val avatarUuid = row.optString("avatar")
                 if (avatarUuid.isBlank()) return@forEach
-                val fileRow = rowsByUuid[avatarUuid] ?: return@forEach
+                val fileRow = rowsByUuid[avatarUuid]
+                if (fileRow == null) {
+                    row.put("avatar", "")
+                    writeText(documentFile, document.toString(2))
+                    return@forEach
+                }
+                val backgroundUuid = row.optString("backgroundFileUuid")
+                if (backgroundUuid.isNotBlank() && backgroundUuid !in rowsByUuid) {
+                    row.put("backgroundFileUuid", JSONObject.NULL)
+                    writeText(documentFile, document.toString(2))
+                }
                 val oldHash = originalHashByUuid[avatarUuid] ?: fileRow.optString("hash")
                 val categoryFile = File(
                     root,
@@ -1043,8 +1053,7 @@ class PortableBackupRepository(
                     retainedImages.put(image)
                     return@forEach
                 }
-                val fileRow = rowsByUuid[uuid]
-                    ?: error("A message image references an unknown attachment: " + uuid)
+                val fileRow = rowsByUuid[uuid] ?: return@forEach
                 val oldHash = originalHashByUuid[uuid] ?: fileRow.optString("hash")
                 val categoryFile = File(
                     root,
