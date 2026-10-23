@@ -1,8 +1,10 @@
 package me.kafuuneko.rpclient.libs.backup
 
 import androidx.sqlite.db.SupportSQLiteDatabase
+import android.util.Base64
 import com.google.gson.Gson
 import java.io.File
+import java.io.StringWriter
 import me.kafuuneko.rpclient.libs.backup.BackupArchiveFiles.writeJsonLine
 import me.kafuuneko.rpclient.libs.backup.BackupArchiveFiles.writeText
 import me.kafuuneko.rpclient.libs.backup.BackupArchiveFormat.TABLE_ROWS_KEY
@@ -11,6 +13,12 @@ import me.kafuuneko.rpclient.libs.backup.BackupDatabaseCodec.readRows
 import me.kafuuneko.rpclient.libs.backup.BackupDatabaseCodec.tableRows
 import me.kafuuneko.rpclient.libs.character.CharacterCardMapper
 import me.kafuuneko.rpclient.libs.character.LorebookCodec
+import me.kafuuneko.rpclient.libs.chat.ChatArchive
+import me.kafuuneko.rpclient.libs.chat.ChatArchiveCodec
+import me.kafuuneko.rpclient.libs.chat.ChatArchiveImage
+import me.kafuuneko.rpclient.libs.chat.ChatArchiveMessage
+import me.kafuuneko.rpclient.libs.chat.ChatArchiveMessageRole
+import me.kafuuneko.rpclient.libs.chat.ChatArchiveSummary
 import me.kafuuneko.rpclient.libs.room.entity.Character
 import me.kafuuneko.rpclient.libs.room.entity.Lorebook
 import me.kafuuneko.rpclient.libs.room.entity.LorebookEntry
@@ -21,7 +29,8 @@ import org.json.JSONObject
 internal class PortableBackupDocumentWriter(
     private val mDatabase: SupportSQLiteDatabase,
     private val mTables: List<String>,
-    private val mRoot: File
+    private val mRoot: File,
+    private val mRepository: File
 ) {
     private val mOwnedTables = mutableSetOf<String>()
     private fun own(vararg names: String) {
@@ -130,27 +139,95 @@ internal class PortableBackupDocumentWriter(
         }
     }
 
-    /** 逐会话保存单聊消息，沿用时间和 ID 的稳定顺序。 */
+    /** Write standard SillyTavern-compatible JSONL with lossless rows in ignorable extensions. */
     private fun writeChats() {
-        // JSONL 先写会话元数据，再写每条消息及其原始行。
+        val codec = ChatArchiveCodec(Gson())
         val chatSessions = rows("chat_sessions")
-        own("chat_sessions")
+        val allMessages = rows("chat_messages").objects()
+        val imageRows = rows("message_images").objects()
+        val fileRows = rows("files").objects().associateBy { it.optString("uuid") }
+        val characters = rows("character").objects().associateBy { it.optLong("id") }
+        val fileByUuid = fileRows
+        own("chat_sessions", "chat_messages")
         chatSessions.objects().forEach { session ->
-            val id = session.optLong("id")
-            val messages = filtered("chat_messages", "sessionId", id).objects()
-                .sortedWith(compareBy<JSONObject> { it.optLong("createTime") }.thenBy { it.optLong("id") })
-            own("chat_messages")
-            File(mRoot, "chats/conversation-" + id + ".jsonl").bufferedWriter(Charsets.UTF_8).use { writer ->
-                writeJsonLine(JSONObject()
-                    .put("type", "header")
-                    .put("format", "rpclient-conversation")
-                    .put("session", session)
-                    .put(TABLE_ROWS_KEY, tableRows("chat_sessions" to JSONArray().put(session))), writer)
-                messages.forEach { message ->
-                    writeJsonLine(JSONObject()
-                        .put("type", "message")
-                        .put("message", message)
-                        .put(TABLE_ROWS_KEY, tableRows("chat_messages" to JSONArray().put(message))), writer)
+            val sessionId = session.optLong("id")
+            val sessionMessages = allMessages.filter { it.optLong("sessionId") == sessionId }
+            val summaryRow = sessionMessages.firstOrNull {
+                it.optString("source").equals("Summary", ignoreCase = true)
+            }
+            val messages = sessionMessages.filterNot {
+                it.optString("source").equals("Summary", ignoreCase = true)
+            }.sortedWith(compareBy<JSONObject> { it.optLong("createTime") }.thenBy { it.optLong("id") })
+            val summary = summaryRow?.let { row ->
+                val coveredId = if (row.isNull("coveredMessageId")) 0L else row.optLong("coveredMessageId")
+                val coveredIndex = if (coveredId == 0L) -1 else
+                    messages.indexOfFirst { it.optLong("id") == coveredId }
+                ChatArchiveSummary(
+                    content = row.optString("content"),
+                    createTime = row.optLong("createTime"),
+                    coveredMessageIndex = coveredIndex
+                )
+            }
+            val character = characters[session.optLong("characterId")]
+            val archive = ChatArchive(
+                title = session.optString("title"),
+                createTime = session.optLong("createTime"),
+                latestTime = session.optLong("latestTime"),
+                userName = session.optString("userName"),
+                userDescription = session.optString("userDescription"),
+                userNote = session.optString("userNote"),
+                creatorNotes = if (session.isNull("creatorNotes")) null else session.optString("creatorNotes"),
+                lorebookEntrySet = session.optString("lorebookEntrySet", "[]"),
+                worldInfoStateJson = session.optString("worldInfoStateJson", "{}"),
+                autoSummaryPaused = session.optBoolean("autoSummaryPaused"),
+                characterNameHint = character?.optString("name").orEmpty(),
+                characterFingerprint = null,
+                messages = emptyList(),
+                summary = summary
+            )
+            val destination = File(mRoot, "chats/conversation-" + sessionId + ".jsonl")
+            destination.bufferedWriter(Charsets.UTF_8).use { writer ->
+                val headerWriter = StringWriter()
+                codec.encodeHeader(archive, headerWriter)
+                val header = JSONObject(headerWriter.toString().trim())
+                val headerRows = mutableListOf("chat_sessions" to JSONArray().put(session))
+                if (summaryRow != null) {
+                    headerRows += "chat_messages" to JSONArray().put(summaryRow)
+                }
+                header.put(TABLE_ROWS_KEY, tableRows(*headerRows.toTypedArray()))
+                writeJsonLine(header, writer)
+
+                val writtenHashes = mutableSetOf<String>()
+                messages.forEach { row ->
+                    val role = when (row.optString("source")) {
+                        "User" -> ChatArchiveMessageRole.User
+                        "System" -> ChatArchiveMessageRole.Narrator
+                        else -> ChatArchiveMessageRole.Character
+                    }
+                    val attachments = imageRows.filter {
+                        it.optLong("messageId") == row.optLong("id") &&
+                            it.optString("messageType").equals("single", ignoreCase = true)
+                    }.sortedBy { it.optInt("position") }
+                    val images = attachments.mapNotNull { image ->
+                        val file = fileByUuid[image.optString("imageUuid")] ?: return@mapNotNull null
+                        val asset = File(mRepository, file.optString("hash"))
+                        if (!asset.isFile) return@mapNotNull null
+                        ChatArchiveImage(
+                            mimeType = file.optString("mimeType").takeIf { it.isNotBlank() } ?: "image/png",
+                            data = java.util.Base64.getEncoder().encodeToString(asset.readBytes())
+                        )
+                    }
+                    val message = ChatArchiveMessage(
+                        createTime = row.optLong("createTime"),
+                        role = role,
+                        content = row.optString("content"),
+                        images = images
+                    )
+                    val lineWriter = StringWriter()
+                    codec.encodeMessage(archive, message, lineWriter, writtenHashes)
+                    val json = JSONObject(lineWriter.toString().trim())
+                    json.put(TABLE_ROWS_KEY, tableRows("chat_messages" to JSONArray().put(row)))
+                    writeJsonLine(json, writer)
                 }
             }
         }
