@@ -41,6 +41,64 @@ internal class PortableBackupDocumentWriter(
     private fun filtered(table: String, column: String, value: Any?): JSONArray =
         if (table in mTables) readRows(mDatabase, table, column, value) else JSONArray()
 
+    /**
+     * Describe a database row without exposing its content. This is attached only to a failed
+     * character mapping stage, where Gson can otherwise hide corrupt/null columns behind an NPE.
+     */
+    private fun characterRowDiagnostics(row: JSONObject): String {
+        val columns = row.keys().asSequence().toList().sorted()
+        val expectedColumns = listOf(
+            "id", "name", "avatar", "characterTags", "description", "creatorNotes",
+            "personality", "scenario", "firstMessages", "examplesOfDialogue",
+            "postHistoryInstructions", "systemPrompt", "creator", "characterVersion",
+            "alternateGreetings", "extensionsJson", "depthPromptPrompt", "depthPromptDepth",
+            "depthPromptRole", "characterLorebookId", "backgroundFileUuid"
+        )
+        val nullColumns = columns.filter { row.isNull(it) }
+        val missingColumns = expectedColumns.filterNot { row.has(it) }
+        val emptyStringColumns = columns.filter { column ->
+            !row.isNull(column) && row.opt(column) is String && row.optString(column).isEmpty()
+        }
+        val fieldTypes = columns.map { column ->
+            val value = row.opt(column)
+            val type = when (value) {
+                null, JSONObject.NULL -> "null"
+                is String -> "string(length=${value.length})"
+                is Number -> "number"
+                is Boolean -> "boolean"
+                is JSONObject -> "object"
+                is JSONArray -> "array"
+                else -> value.javaClass.simpleName
+            }
+            "$column:$type"
+        }
+        val invalidJsonFields = listOf(
+            "characterTags" to "array",
+            "alternateGreetings" to "array",
+            "extensionsJson" to "object"
+        ).mapNotNull { (column, expectedType) ->
+            if (!row.has(column) || row.isNull(column)) return@mapNotNull null
+            val rawValue = row.opt(column) as? String ?: return@mapNotNull "$column (not a string)"
+            val valid = runCatching {
+                val parsed = org.json.JSONTokener(rawValue).nextValue()
+                when (expectedType) {
+                    "array" -> parsed is JSONArray
+                    "object" -> parsed is JSONObject
+                    else -> false
+                }
+            }.getOrDefault(false)
+            if (valid) null else "$column (expected JSON $expectedType)"
+        }
+        return buildString {
+            append("row-shape={columnCount=${columns.size}")
+            append(", nullColumns=$nullColumns")
+            append(", missingExpectedColumns=$missingColumns")
+            append(", emptyStringColumns=$emptyStringColumns")
+            append(", invalidJsonFields=$invalidJsonFields")
+            append(", fieldTypes=$fieldTypes}")
+        }
+    }
+
     /** Add a feature label to export errors while preserving cancellation semantics. */
     private inline fun <T> withExportStage(stage: String, action: () -> T): T {
         try {
@@ -89,8 +147,17 @@ internal class PortableBackupDocumentWriter(
                     .map { gson.fromJson(it.toString(), LorebookEntry::class.java) }
             }
             val card = withExportStage("character row id $characterId Character Card V2 mapping") {
-                JSONObject(mapper.toV2Json(character, boundBook, boundEntries))
-                    .put(TABLE_ROWS_KEY, tableRows("character" to JSONArray().put(row)))
+                try {
+                    JSONObject(mapper.toV2Json(character, boundBook, boundEntries))
+                        .put(TABLE_ROWS_KEY, tableRows("character" to JSONArray().put(row)))
+                } catch (error: Exception) {
+                    // Keep the user-facing stage concise; full details are included in copied diagnostics.
+                    error.addSuppressed(IllegalStateException(
+                        "Character row diagnostic (values intentionally omitted): " +
+                            characterRowDiagnostics(row)
+                    ))
+                    throw error
+                }
             }
             withExportStage("character row id $characterId JSON document write") {
                 writeText(File(mRoot, "characters/character-" + character.id + ".json"), card.toString(2))

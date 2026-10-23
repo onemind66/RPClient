@@ -10,6 +10,7 @@ fun propertyOrEnv(name: String): String? =
 val isForkRelease = providers.gradleProperty("rpclientFork")
     .map { it.toBoolean() }
     .getOrElse(false)
+val gitCommit = providers.environmentVariable("GITHUB_SHA").orElse("local").get()
 
 val releaseStoreFile = propertyOrEnv("RELEASE_STORE_FILE")
 val releaseStorePassword = propertyOrEnv("RELEASE_STORE_PASSWORD")
@@ -37,6 +38,7 @@ android {
         targetSdk = 36
         versionCode = 20260301
         versionName = "2026.3.1"
+        buildConfigField("String", "GIT_COMMIT", "\"$gitCommit\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -89,6 +91,7 @@ android {
         targetCompatibility = JavaVersion.VERSION_11
     }
     buildFeatures {
+        buildConfig = true
         compose = true
     }
     sourceSets["androidTest"].assets.directories.add("$projectDir/schemas")

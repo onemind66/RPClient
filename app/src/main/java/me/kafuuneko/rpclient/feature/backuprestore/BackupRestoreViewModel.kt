@@ -1,6 +1,8 @@
 package me.kafuuneko.rpclient.feature.backuprestore
 
+import android.content.Context
 import android.net.Uri
+import android.os.Build
 import android.util.Log
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CancellationException
@@ -9,6 +11,7 @@ import kotlinx.coroutines.launch
 import java.io.PrintWriter
 import java.io.StringWriter
 import kotlinx.coroutines.withContext
+import me.kafuuneko.rpclient.BuildConfig
 import me.kafuuneko.rpclient.R
 import me.kafuuneko.rpclient.feature.backuprestore.presentation.BackupDialogState
 import me.kafuuneko.rpclient.feature.backuprestore.presentation.BackupOperation
@@ -32,6 +35,7 @@ class BackupRestoreViewModel : CoreViewModelWithEvent<BackupRestoreUiIntent, Bac
     BackupRestoreUiState.Normal()
 ), KoinComponent {
     private val mRepository by inject<PortableBackupRepository>()
+    private val mContext by inject<Context>()
     private var mRestoreUri: Uri? = null
 
     /** 空闲时请求系统创建归档文件。 */
@@ -108,9 +112,54 @@ class BackupRestoreViewModel : CoreViewModelWithEvent<BackupRestoreUiIntent, Bac
      * directly in the current-status card.
      */
     private fun buildDiagnostic(operation: String, error: Exception): String = buildString {
+        val timestamp = java.time.Instant.now()
+        val packageInfo = runCatching {
+            @Suppress("DEPRECATION")
+            mContext.packageManager.getPackageInfo(mContext.packageName, 0)
+        }.getOrNull()
+        val causes = mutableListOf<Throwable>()
+        val seen = java.util.Collections.newSetFromMap(
+            java.util.IdentityHashMap<Throwable, Boolean>()
+        )
+        var current: Throwable? = error
+        while (current != null && seen.add(current)) {
+            causes += current
+            current = current.cause
+        }
+        val rootCause = causes.lastOrNull() ?: error
+
+        appendLine("Diagnostic format: RPClient Backup/Restore v2")
+        appendLine("Diagnostic ID: " + java.util.UUID.randomUUID())
         appendLine("Operation: " + operation)
-        appendLine("Timestamp (UTC epoch millis): " + System.currentTimeMillis())
+        appendLine("Timestamp (UTC): " + timestamp)
+        appendLine("Timestamp (UTC epoch millis): " + timestamp.toEpochMilli())
+        appendLine("App package: " + mContext.packageName)
+        appendLine("Build commit: " + BuildConfig.GIT_COMMIT)
+        appendLine("Debug build: " + BuildConfig.DEBUG)
+        appendLine("App version: " + (packageInfo?.versionName ?: "unavailable"))
+        appendLine("App version code: " + (packageInfo?.versionCode?.toString() ?: "unavailable"))
+        appendLine("Android release: " + Build.VERSION.RELEASE)
+        appendLine("Android SDK: " + Build.VERSION.SDK_INT)
+        appendLine("Device manufacturer: " + Build.MANUFACTURER)
+        appendLine("Device model: " + Build.MODEL)
+        appendLine("Supported ABIs: " + Build.SUPPORTED_ABIS.joinToString())
+        appendLine("Default locale: " + java.util.Locale.getDefault().toLanguageTag())
+        appendLine("Thread: " + Thread.currentThread().name)
+        appendLine("Exception chain depth: " + causes.size)
+        appendLine("Root cause type: " + rootCause.javaClass.name)
+        appendLine("Root cause message: " + (rootCause.message ?: "<no message>"))
         appendLine()
+        appendLine("Exception chain summary:")
+        causes.forEachIndexed { index, cause ->
+            appendLine("  [$index] ${cause.javaClass.name}: ${cause.message ?: "<no message>"}")
+            if (cause.suppressed.isNotEmpty()) {
+                cause.suppressed.forEachIndexed { suppressedIndex, suppressed ->
+                    appendLine("      suppressed[$suppressedIndex]: ${suppressed.javaClass.name}: ${suppressed.message ?: "<no message>"}")
+                }
+            }
+        }
+        appendLine()
+        appendLine("Full stack trace (includes nested causes and suppressed exceptions):")
         val stackTrace = StringWriter()
         error.printStackTrace(PrintWriter(stackTrace))
         append(stackTrace.toString())
