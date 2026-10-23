@@ -263,11 +263,19 @@ class PortableBackupRepository(
                 mContext.getSharedPreferences(prefsName, Context.MODE_PRIVATE)
             ))
         }
+        val preferenceTypes = JSONObject()
+        targetPrefs.listFiles().orEmpty().filter { it.isFile && it.name.endsWith(".xml") }.forEach { xml ->
+            val prefsName = xml.name.removeSuffix(".xml")
+            preferenceTypes.put(prefsName, sharedPreferencesTypes(
+                mContext.getSharedPreferences(prefsName, Context.MODE_PRIVATE)
+            ))
+        }
         writeText(File(root, "settings.json"),
             JSONObject()
                 .put("format", FORMAT)
                 .put("version", VERSION)
                 .put("preferences", preferences)
+                .put("preferenceTypes", preferenceTypes)
                 .put("providerCredentialsIncluded", true)
                 .put("encrypted", false)
                 .put("rawPreferenceXml", "app-data/shared-prefs/")
@@ -526,6 +534,7 @@ class PortableBackupRepository(
         require(settings.optString("format") == FORMAT) { "Unsupported settings document format." }
         val preferences = settings.optJSONObject("preferences")
             ?: error("The settings document has no preferences object.")
+        val preferenceTypes = settings.optJSONObject("preferenceTypes")
         val prefsDirectory = File(root, "app-data/shared-prefs")
         require(prefsDirectory.isDirectory) { "Backup preference files are missing." }
         prefsDirectory.listFiles().orEmpty()
@@ -566,11 +575,29 @@ class PortableBackupRepository(
                             val numeric = value.toDouble()
                             require(numeric.isFinite()) { "Non-finite preference number: " + key }
                             val isIntegral = numeric % 1.0 == 0.0
-                            val tag = when {
-                                !isIntegral -> "float"
-                                numeric >= Int.MIN_VALUE.toDouble() && numeric <= Int.MAX_VALUE.toDouble() -> "int"
-                                numeric >= Long.MIN_VALUE.toDouble() && numeric <= Long.MAX_VALUE.toDouble() -> "long"
-                                else -> error("Preference number is out of range: " + key)
+                            val preferredType = preferenceTypes?.optJSONObject(name)?.optString(key).orEmpty()
+                            val tag = when (preferredType) {
+                                "float" -> "float"
+                                "int" -> {
+                                    require(isIntegral && numeric >= Int.MIN_VALUE.toDouble() &&
+                                        numeric <= Int.MAX_VALUE.toDouble()) {
+                                        "Preference value no longer fits its original int type: " + key
+                                    }
+                                    "int"
+                                }
+                                "long" -> {
+                                    require(isIntegral && numeric >= Long.MIN_VALUE.toDouble() &&
+                                        numeric <= Long.MAX_VALUE.toDouble()) {
+                                        "Preference value no longer fits its original long type: " + key
+                                    }
+                                    "long"
+                                }
+                                else -> when {
+                                    !isIntegral -> "float"
+                                    numeric >= Int.MIN_VALUE.toDouble() && numeric <= Int.MAX_VALUE.toDouble() -> "int"
+                                    numeric >= Long.MIN_VALUE.toDouble() && numeric <= Long.MAX_VALUE.toDouble() -> "long"
+                                    else -> error("Preference number is out of range: " + key)
+                                }
                             }
                             serializer.startTag(null, tag)
                             serializer.attribute(null, "name", key)
@@ -604,6 +631,24 @@ class PortableBackupRepository(
                 output.flush()
             }
         }
+    }
+
+    /** Preserve original SharedPreferences value types while keeping settings.json readable. */
+    private fun sharedPreferencesTypes(preferences: SharedPreferences): JSONObject {
+        val types = JSONObject()
+        preferences.all.toSortedMap().forEach { (key, value) ->
+            val type = when (value) {
+                is String -> "string"
+                is Boolean -> "boolean"
+                is Int -> "int"
+                is Long -> "long"
+                is Float -> "float"
+                is Set<*> -> "set"
+                else -> error("Unsupported SharedPreferences value type for key: " + key)
+            }
+            types.put(key, type)
+        }
+        return types
     }
 
     /** 将 Android 偏好类型转为便于人工读取的 JSON。 */
