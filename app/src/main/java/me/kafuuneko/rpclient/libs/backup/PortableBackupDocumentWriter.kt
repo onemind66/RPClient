@@ -123,6 +123,56 @@ internal class PortableBackupDocumentWriter(
         withExportStage("remaining database tables") { writeRemainingTables() }
     }
 
+    /**
+     * Backup-only fallback for Character Card V2 generation.
+     *
+     * The portable archive also stores the exact character database row. If the shared card mapper
+     * fails for an unexpected entity shape, this fallback keeps the backup usable without changing
+     * the shared Character Card or Regex implementation. Worldbooks are exported as their own
+     * editable documents, while their original IDs/relationships remain in the preserved row.
+     */
+    private fun backupCharacterCardFallback(character: Character): JSONObject {
+        fun jsonArrayOrEmpty(raw: String?): JSONArray = runCatching {
+            org.json.JSONTokener(raw.orEmpty()).nextValue() as? JSONArray ?: JSONArray()
+        }.getOrDefault(JSONArray())
+
+        fun jsonObjectOrEmpty(raw: String?): JSONObject = runCatching {
+            org.json.JSONTokener(raw.orEmpty()).nextValue() as? JSONObject ?: JSONObject()
+        }.getOrDefault(JSONObject())
+
+        val extensions = jsonObjectOrEmpty(character.extensionsJson)
+        val depthPrompt = extensions.optJSONObject("depth_prompt") ?: JSONObject()
+        depthPrompt.put("prompt", character.depthPromptPrompt.orEmpty())
+        depthPrompt.put("depth", character.depthPromptDepth)
+        depthPrompt.put("role", when (character.depthPromptRole) {
+            LorebookEntry.ROLE_USER -> "user"
+            LorebookEntry.ROLE_ASSISTANT -> "assistant"
+            else -> "system"
+        })
+        extensions.put("depth_prompt", depthPrompt)
+
+        val data = JSONObject()
+            .put("name", character.name.orEmpty())
+            .put("description", character.description.orEmpty())
+            .put("personality", character.personality.orEmpty())
+            .put("scenario", character.scenario.orEmpty())
+            .put("first_mes", character.firstMessages.orEmpty().substringBefore("<START>"))
+            .put("mes_example", character.examplesOfDialogue.orEmpty())
+            .put("creator_notes", character.creatorNotes.orEmpty())
+            .put("system_prompt", character.systemPrompt.orEmpty())
+            .put("post_history_instructions", character.postHistoryInstructions.orEmpty())
+            .put("alternate_greetings", jsonArrayOrEmpty(character.alternateGreetings))
+            .put("tags", jsonArrayOrEmpty(character.characterTags))
+            .put("creator", character.creator.orEmpty())
+            .put("character_version", character.characterVersion.orEmpty())
+            .put("extensions", extensions)
+
+        return JSONObject()
+            .put("spec", "chara_card_v2")
+            .put("spec_version", "2.0")
+            .put("data", data)
+    }
+
     /** 保存可直接由角色卡导入器读取的 Character Card V2 JSON。 */
     private fun writeCharacters() {
         val gson = Gson()
@@ -147,17 +197,24 @@ internal class PortableBackupDocumentWriter(
                     .map { gson.fromJson(it.toString(), LorebookEntry::class.java) }
             }
             val card = withExportStage("character row id $characterId Character Card V2 mapping") {
-                try {
+                val cardDocument = try {
                     JSONObject(mapper.toV2Json(character, boundBook, boundEntries))
-                        .put(TABLE_ROWS_KEY, tableRows("character" to JSONArray().put(row)))
-                } catch (error: Exception) {
-                    // Keep the user-facing stage concise; full details are included in copied diagnostics.
-                    error.addSuppressed(IllegalStateException(
-                        "Character row diagnostic (values intentionally omitted): " +
-                            characterRowDiagnostics(row)
-                    ))
-                    throw error
+                } catch (mappingError: Exception) {
+                    // Keep recovery inside Backup & Restore: a single malformed/unexpected entity
+                    // must not prevent the raw database snapshot and other documents from exporting.
+                    try {
+                        backupCharacterCardFallback(character).also {
+                            mappingError.addSuppressed(IllegalStateException(
+                                "Backup-local Character Card V2 fallback used; original row is preserved in " +
+                                    TABLE_ROWS_KEY + ". " + characterRowDiagnostics(row)
+                            ))
+                        }
+                    } catch (fallbackError: Exception) {
+                        mappingError.addSuppressed(fallbackError)
+                        throw mappingError
+                    }
                 }
+                cardDocument.put(TABLE_ROWS_KEY, tableRows("character" to JSONArray().put(row)))
             }
             withExportStage("character row id $characterId JSON document write") {
                 writeText(File(mRoot, "characters/character-" + character.id + ".json"), card.toString(2))
