@@ -282,32 +282,54 @@ class PortableBackupRepository(
     private fun applyEditableCharacterDocuments(root: File) {
         val gson = Gson()
         val mapper = CharacterCardMapper(gson)
-        File(root, "characters").listFiles().orEmpty()
+        val files = File(root, "characters").listFiles().orEmpty()
             .filter { it.isFile && it.extension == "json" }
-            .forEach { file ->
-                val document = JSONObject(file.readText(Charsets.UTF_8))
-                val tableRows = document.optJSONObject(TABLE_ROWS_KEY) ?: return@forEach
-                val characterRows = tableRows.optJSONArray("character") ?: return@forEach
-                require(characterRows.length() == 1) {
-                    "Each character document must contain exactly one character row: " + file.name
-                }
-                val original = characterRows.getJSONObject(0)
-                val parsed = mapper.parseCharacter(
-                    document.toString(),
-                    avatar = original.optString("avatar"),
-                    characterLorebookId = original.optLong("characterLorebookId")
-                ).character
-                val updated = parsed.copy(
-                    id = original.optLong("id"),
-                    backgroundFileUuid = if (original.isNull("backgroundFileUuid")) {
-                        null
-                    } else {
-                        original.optString("backgroundFileUuid")
-                    }
-                )
-                characterRows.put(0, JSONObject(gson.toJson(updated)))
-                writeText(file, document.toString(2))
+        val usedIds = files.mapNotNull { file ->
+            runCatching {
+                JSONObject(file.readText(Charsets.UTF_8))
+                    .getJSONObject(TABLE_ROWS_KEY).getJSONArray("character")
+                    .getJSONObject(0).optLong("id")
+            }.getOrNull()?.takeIf { it > 0L }
+        }.toMutableSet()
+        var nextId = (usedIds.maxOrNull() ?: 0L) + 1L
+
+        files.forEach { file ->
+            val document = JSONObject(file.readText(Charsets.UTF_8))
+            val tableRows = document.optJSONObject(TABLE_ROWS_KEY) ?: JSONObject().also {
+                document.put(TABLE_ROWS_KEY, it)
             }
+            val characterRows = tableRows.optJSONArray("character") ?: JSONArray().also {
+                tableRows.put("character", it)
+            }
+            require(characterRows.length() <= 1) {
+                "Each character document must contain at most one character row: " + file.name
+            }
+
+            val original = characterRows.optJSONObject(0)
+            val parsed = mapper.parseCharacter(
+                document.toString(),
+                avatar = original?.optString("avatar").orEmpty(),
+                characterLorebookId = original?.optLong("characterLorebookId") ?: 0L
+            ).character
+            val id = original?.optLong("id")?.takeIf { it > 0L } ?: nextId++
+            require(original == null || usedIds.contains(id)) {
+                "Character row ID is inconsistent in " + file.name
+            }
+            if (original == null) {
+                require(usedIds.add(id)) { "Duplicate character ID in " + file.name }
+            }
+            val updated = parsed.copy(
+                id = id,
+                backgroundFileUuid = if (original == null || original.isNull("backgroundFileUuid")) {
+                    null
+                } else {
+                    original.optString("backgroundFileUuid")
+                }
+            )
+            if (original == null) characterRows.put(JSONObject(gson.toJson(updated)))
+            else characterRows.put(0, JSONObject(gson.toJson(updated)))
+            writeText(file, document.toString(2))
+        }
     }
 
     /**
