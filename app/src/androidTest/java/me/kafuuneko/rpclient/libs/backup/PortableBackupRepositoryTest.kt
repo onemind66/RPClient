@@ -119,7 +119,39 @@ class PortableBackupRepositoryTest {
         assertTrue(FileRepository(context, primary).getFileEntity(prepared.file.uuid) != null)
     }
 
-    /** 无效归档必须在关闭或覆盖任何当前数据库之前拒绝。 */
+    /** 编辑 ZIP 后 manifest 的导出时摘要允许过期，但路径安全校验仍然生效。 */
+    @Test
+    fun editableArchiveInventoryAllowsChangedAddedAndRemovedFiles() {
+        val inventory = File(root, "editable-inventory").apply { mkdirs() }
+        val changed = File(inventory, "characters/character-1.json").apply {
+            parentFile?.mkdirs()
+            writeText("{\"name\":\"edited\"}")
+        }
+        val added = File(inventory, "characters/character-2.json").apply {
+            writeText("{\"name\":\"added\"}")
+        }
+        val manifestFiles = JSONObject()
+            .put("characters/character-1.json", JSONObject()
+                .put("size", 1)
+                .put("sha256", "0".repeat(64)))
+            .put("characters/character-removed.json", JSONObject()
+                .put("size", 1)
+                .put("sha256", "0".repeat(64)))
+
+        // Changed content, a missing indexed file, and a new file are valid edit operations.
+        BackupArchiveFiles.validateChecksums(inventory, manifestFiles)
+        assertTrue(changed.isFile)
+        assertTrue(added.isFile)
+
+        val unsafeInventory = File(root, "unsafe-inventory").apply { mkdirs() }
+        val unsafeManifest = JSONObject()
+            .put("../outside.json", JSONObject().put("size", 1).put("sha256", "0".repeat(64)))
+        assertTrue(runCatching {
+            BackupArchiveFiles.validateChecksums(unsafeInventory, unsafeManifest)
+        }.isFailure)
+    }
+
+    /** 无效归档必须在关闭或覆盖任何当前数据库之前拒绝. */
     @Test
     fun invalidArchiveLeavesLiveDataReadable() = runBlocking {
         primary.openHelper.writableDatabase.execSQL("CREATE TABLE backup_probe(value TEXT)")
