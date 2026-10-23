@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.net.Uri
 import android.util.Xml
+import com.google.gson.Gson
 import androidx.sqlite.db.SupportSQLiteDatabase
 import java.io.File
 import java.io.FileInputStream
@@ -33,6 +34,7 @@ import me.kafuuneko.rpclient.libs.backup.BackupDatabaseCodec.reconstructDatabase
 import me.kafuuneko.rpclient.libs.backup.BackupDatabaseCodec.schemaJson
 import me.kafuuneko.rpclient.libs.backup.BackupDatabaseCodec.tableNames
 import me.kafuuneko.rpclient.libs.backup.BackupDatabaseCodec.tableRows
+import me.kafuuneko.rpclient.libs.character.CharacterCardMapper
 import me.kafuuneko.rpclient.libs.room.AppDatabase
 import me.kafuuneko.rpclient.libs.room.RequestLogDatabase
 import org.json.JSONArray
@@ -210,6 +212,8 @@ class PortableBackupRepository(
             val logsSchemaFile = File(stage, "app-data/request-log-schema.json")
             require(primarySchemaFile.isFile) { "The primary database schema is missing." }
             require(logsSchemaFile.isFile) { "The request-log database schema is missing." }
+            applyEditableCharacterDocuments(stage)
+            applyEditableSettings(stage)
             val primaryRows = collectTableRows(stage, excludePath = "app-data/request-logs.jsonl")
             val requestRows = collectTableRows(stage, includePath = "app-data/request-logs.jsonl")
             val stagedPrimary = File(stage, PRIMARY_DB)
@@ -267,6 +271,42 @@ class PortableBackupRepository(
                 .put("rawPreferenceXml", "app-data/shared-prefs/")
                 .put("note", "Preferences are provided as readable JSON and preserved as original XML for exact restoration.")
                 .toString(2))
+    }
+
+    /**
+     * Synchronize user-facing Character Card V2 fields back into the exact Room row.
+     * The hidden row remains the carrier for RPClient-only fields, IDs, and relationships, but
+     * it must not override edits to fields that the standard card format exposes.
+     */
+    private fun applyEditableCharacterDocuments(root: File) {
+        val gson = Gson()
+        val mapper = CharacterCardMapper(gson)
+        File(root, "characters").listFiles().orEmpty()
+            .filter { it.isFile && it.extension == "json" }
+            .forEach { file ->
+                val document = JSONObject(file.readText(Charsets.UTF_8))
+                val tableRows = document.optJSONObject(TABLE_ROWS_KEY) ?: return@forEach
+                val characterRows = tableRows.optJSONArray("character") ?: return@forEach
+                require(characterRows.length() == 1) {
+                    "Each character document must contain exactly one character row: " + file.name
+                }
+                val original = characterRows.getJSONObject(0)
+                val parsed = mapper.parseCharacter(
+                    document.toString(),
+                    avatar = original.optString("avatar"),
+                    characterLorebookId = original.optLong("characterLorebookId")
+                ).character
+                val updated = parsed.copy(
+                    id = original.optLong("id"),
+                    backgroundFileUuid = if (original.isNull("backgroundFileUuid")) {
+                        null
+                    } else {
+                        original.optString("backgroundFileUuid")
+                    }
+                )
+                characterRows.put(0, JSONObject(gson.toJson(updated)))
+                writeText(file, document.toString(2))
+            }
     }
 
     /**
