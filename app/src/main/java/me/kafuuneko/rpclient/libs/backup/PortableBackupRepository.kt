@@ -224,6 +224,7 @@ class PortableBackupRepository(
             applyEditableStoryDocuments(stage)
             applyEditableChatDocuments(stage)
             applyEditableGroupChatDocuments(stage)
+            applyEditableRawRowDocuments(stage)
             applyEditableAttachmentDocuments(stage)
             applyEditableSettings(stage)
             val primaryRows = reconcileMessageImageRows(
@@ -793,6 +794,82 @@ class PortableBackupRepository(
                 }
                 require(file.delete()) { "Could not replace chat document: " + file.name }
                 require(temporary.renameTo(file)) { "Could not finalize chat document: " + file.name }
+            } finally {
+                temporary.delete()
+            }
+        }
+    }
+
+    /**
+     * For documents whose app-native format already exposes database-shaped records, use the
+     * visible arrays/objects as the row source instead of stale duplicate _tableRows snapshots.
+     */
+    private fun applyEditableRawRowDocuments(root: File) {
+        fun syncArrays(path: String, mappings: List<Pair<String, String>>) {
+            val file = File(root, path)
+            if (!file.isFile) return
+            val document = JSONObject(file.readText(Charsets.UTF_8))
+            val tableRows = document.optJSONObject(TABLE_ROWS_KEY) ?: JSONObject().also {
+                document.put(TABLE_ROWS_KEY, it)
+            }
+            mappings.forEach { (visibleKey, table) ->
+                val rows = document.optJSONArray(visibleKey) ?: JSONArray()
+                tableRows.put(table, rows)
+            }
+            writeText(file, document.toString(2))
+        }
+
+        syncArrays(
+            "providers/provider-configurations.json",
+            listOf(
+                "providers" to "llm_providers",
+                "characterAssociations" to "character_llm_provider_associations"
+            )
+        )
+        syncArrays("app-data/token-usage.json", listOf("records" to "llm_token_usage_records"))
+        syncArrays("app-data/message-images.json", listOf("images" to "message_images"))
+        syncArrays("app-data/files-index.json", listOf("files" to "files"))
+
+        File(root, "stories").listFiles().orEmpty()
+            .filter { it.isFile && it.extension == "json" }
+            .forEach { file ->
+                val document = JSONObject(file.readText(Charsets.UTF_8))
+                val tableRows = document.optJSONObject(TABLE_ROWS_KEY) ?: return@forEach
+                document.optJSONArray("characterRelations")?.let {
+                    tableRows.put("story_characters", it)
+                }
+                document.optJSONArray("worldBookEntryStates")?.let {
+                    tableRows.put("story_lorebook_entries", it)
+                }
+                writeText(file, document.toString(2))
+            }
+
+        listOf(
+            "app-data/other-tables.jsonl" to "row",
+            "app-data/request-logs.jsonl" to "record"
+        ).forEach { (relativePath, rowKey) ->
+            val file = File(root, relativePath)
+            if (!file.isFile) return@forEach
+            val temporary = File.createTempFile("portable-rows-", ".jsonl", file.parentFile)
+            try {
+                temporary.bufferedWriter(Charsets.UTF_8).use { writer ->
+                    file.bufferedReader(Charsets.UTF_8).use { reader ->
+                        reader.forEachLine { line ->
+                            if (line.isBlank()) return@forEachLine
+                            val document = JSONObject(line)
+                            val table = document.optString("table")
+                            val row = document.optJSONObject(rowKey)
+                            if (table.isNotBlank() && row != null) {
+                                document.put(TABLE_ROWS_KEY, tableRows(table to JSONArray().put(row)))
+                            }
+                            writeJsonLine(document, writer)
+                        }
+                    }
+                }
+                require(file.delete()) { "Could not replace editable row document: " + file.name }
+                require(temporary.renameTo(file)) {
+                    "Could not finalize editable row document: " + file.name
+                }
             } finally {
                 temporary.delete()
             }
