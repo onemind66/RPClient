@@ -225,7 +225,9 @@ class PortableBackupRepository(
             applyEditableChatDocuments(stage)
             applyEditableAttachmentDocuments(stage)
             applyEditableSettings(stage)
-            val primaryRows = collectTableRows(stage, excludePath = "app-data/request-logs.jsonl")
+            val primaryRows = reconcileMessageImageRows(
+                collectTableRows(stage, excludePath = "app-data/request-logs.jsonl")
+            )
             val requestRows = collectTableRows(stage, includePath = "app-data/request-logs.jsonl")
             val stagedPrimary = File(stage, PRIMARY_DB)
             val stagedLogs = File(stage, LOGS_DB)
@@ -296,6 +298,30 @@ class PortableBackupRepository(
      * The hidden row remains the carrier for RPClient-only fields, IDs, and relationships, but
      * it must not override edits to fields that the standard card format exposes.
      */
+    /**
+     * message_images cannot declare a conditional foreign key to single or group messages. Remove
+     * stale image links explicitly when their owning message was deleted from an editable document.
+     */
+    private fun reconcileMessageImageRows(
+        source: Map<String, List<JSONObject>>
+    ): Map<String, List<JSONObject>> {
+        val result = source.mapValuesTo(linkedMapOf()) { (_, rows) -> rows.toMutableList() }
+        val singleMessageIds = result["chat_messages"].orEmpty()
+            .mapTo(mutableSetOf()) { it.optLong("id") }
+        val groupMessageIds = result["group_chat_messages"].orEmpty()
+            .mapTo(mutableSetOf()) { it.optLong("id") }
+        val imageRows = result["message_images"] ?: return result.mapValues { it.value.toList() }
+        imageRows.removeAll { image ->
+            val messageId = image.optLong("messageId")
+            when (image.optString("messageType").lowercase()) {
+                "single" -> messageId !in singleMessageIds
+                "group" -> messageId !in groupMessageIds
+                else -> error("Unknown message type in attachment index: " + image.optString("messageType"))
+            }
+        }
+        return result.mapValues { it.value.toList() }
+    }
+
     private fun applyEditableCharacterDocuments(root: File) {
         val gson = Gson()
         val mapper = CharacterCardMapper(gson)
