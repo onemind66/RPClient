@@ -22,6 +22,8 @@ import me.kafuuneko.rpclient.libs.chat.ChatArchiveSummary
 import me.kafuuneko.rpclient.libs.room.entity.Character
 import me.kafuuneko.rpclient.libs.room.entity.Lorebook
 import me.kafuuneko.rpclient.libs.room.entity.LorebookEntry
+import me.kafuuneko.rpclient.libs.regex.RegexScript
+import me.kafuuneko.rpclient.libs.regex.RegexScriptCodec
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -318,30 +320,57 @@ internal class PortableBackupDocumentWriter(
                 )).toString(2))
     }
 
-    /** 保存全局与角色脚本，以及角色授权记录。 */
+    /** Export regex scripts in SillyTavern's standard RegexScriptData array format. */
     private fun writeRegex() {
-        // 授权关系与脚本作用域分别保存，恢复时不重新推导授权。
+        val gson = Gson()
+        val codec = RegexScriptCodec(gson)
         val scriptRows = rows("regex_scripts")
         own("regex_scripts")
-        val globalScripts = scriptRows.objects().filter { it.isNull("characterId") }.toJsonArray()
+        fun toPortableScript(row: JSONObject): RegexScript = RegexScript(
+            id = row.optString("scriptId").ifBlank { row.optLong("rowId").toString() },
+            scriptName = row.optString("scriptName"),
+            findRegex = row.optString("findRegex"),
+            replaceString = row.optString("replaceString"),
+            trimStrings = JSONArray(row.optString("trimStringsJson", "[]")).let { array ->
+                (0 until array.length()).map { array.optString(it) }
+            },
+            placement = JSONArray(row.optString("placementJson", "[]")).let { array ->
+                (0 until array.length()).map { array.optInt(it) }
+            },
+            disabled = row.optBoolean("disabled"),
+            markdownOnly = row.optBoolean("markdownOnly"),
+            promptOnly = row.optBoolean("promptOnly"),
+            runOnEdit = row.optBoolean("runOnEdit"),
+            substituteRegex = row.optInt("substituteRegex"),
+            minDepth = if (row.isNull("minDepth")) null else row.optInt("minDepth"),
+            maxDepth = if (row.isNull("maxDepth")) null else row.optInt("maxDepth"),
+            rawJson = row.optString("rawJson", "{}")
+        )
+        val globalRows = scriptRows.objects().filter { it.isNull("characterId") }
+            .sortedBy { it.optInt("sortOrder") }
         writeText(File(mRoot, "regex/global-scripts.json"),
             JSONObject()
                 .put("format", "rpclient-regex-scripts")
                 .put("version", VERSION)
-                .put("scripts", globalScripts)
-                .put(TABLE_ROWS_KEY, tableRows("regex_scripts" to globalScripts))
+                .put("scripts", JSONArray(codec.toJson(globalRows.map(::toPortableScript), pretty = true)))
+                .put(TABLE_ROWS_KEY, tableRows("regex_scripts" to JSONArray().apply {
+                    globalRows.forEach { put(it) }
+                }))
                 .toString(2))
+
         rows("character").objects().map { it.optLong("id") }.sorted().forEach { characterId ->
             val characterScripts = scriptRows.objects().filter {
                 !it.isNull("characterId") && it.optLong("characterId") == characterId
-            }.toJsonArray()
+            }.sortedBy { it.optInt("sortOrder") }
             writeText(File(mRoot, "regex/character-scripts/character-" + characterId + ".json"),
                 JSONObject()
                     .put("format", "rpclient-regex-scripts")
                     .put("version", VERSION)
                     .put("characterId", characterId)
-                    .put("scripts", characterScripts)
-                    .put(TABLE_ROWS_KEY, tableRows("regex_scripts" to characterScripts))
+                    .put("scripts", JSONArray(codec.toJson(characterScripts.map(::toPortableScript), pretty = true)))
+                    .put(TABLE_ROWS_KEY, tableRows("regex_scripts" to JSONArray().apply {
+                        characterScripts.forEach { put(it) }
+                    }))
                     .toString(2))
         }
         val authorizations = rows("regex_character_authorizations")
