@@ -151,6 +151,43 @@ class PortableBackupRepositoryTest {
         }.isFailure)
     }
 
+    /** A newly added standard Character Card V2 document is imported without private row metadata. */
+    @Test
+    fun addedCharacterCardDocumentIsImported() = runBlocking {
+        primary.openHelper.writableDatabase.execSQL(
+            "INSERT INTO character (" +
+                "id, name, avatar, characterTags, description, creatorNotes, personality, scenario, " +
+                "firstMessages, examplesOfDialogue, postHistoryInstructions, systemPrompt, creator, " +
+                "characterVersion, alternateGreetings, extensionsJson, depthPromptPrompt, " +
+                "depthPromptDepth, depthPromptRole, characterLorebookId, backgroundFileUuid" +
+                ") VALUES (1, 'Existing character', '', '[]', '', '', '', '', '', '', '', '', '', '', " +
+                "'[]', '{}', '', 4, 0, 0, NULL)"
+        )
+        val archive = File(root, "added-character.zip")
+        val repository = PortableBackupRepository(
+            context, primary, logs, BackupArchiveRepository(context, primary)
+        )
+        repository.exportArchive(Uri.fromFile(archive))
+
+        val unpacked = File(root, "added-character").apply { mkdirs() }
+        BackupArchiveFiles.extractArchive(context, Uri.fromFile(archive), unpacked)
+        val added = JSONObject(File(unpacked, "characters/character-1.json").readText())
+        added.remove(TABLE_ROWS_KEY)
+        added.getJSONObject("data").put("name", "Newly added character")
+        File(unpacked, "characters/character-added.json").writeText(added.toString(2))
+        repackDirectory(unpacked, archive)
+
+        repository.restoreArchive(Uri.fromFile(archive))
+        openDatabases()
+        primary.openHelper.readableDatabase.query(
+            "SELECT name FROM character WHERE name = 'Newly added character'"
+        ).use {
+            assertTrue(it.moveToFirst())
+            assertEquals("Newly added character", it.getString(0))
+            assertFalse(it.moveToNext())
+        }
+    }
+
     /** Standard SillyTavern worldbook fields override the preserved internal row during restore. */
     @Test
     fun editableWorldbookFieldsAreRestored() = runBlocking {
