@@ -1,6 +1,7 @@
 package me.kafuuneko.rpclient.libs.backup
 
 import androidx.sqlite.db.SupportSQLiteDatabase
+import com.google.gson.Gson
 import java.io.File
 import me.kafuuneko.rpclient.libs.backup.BackupArchiveFiles.writeJsonLine
 import me.kafuuneko.rpclient.libs.backup.BackupArchiveFiles.writeText
@@ -8,6 +9,11 @@ import me.kafuuneko.rpclient.libs.backup.BackupArchiveFormat.TABLE_ROWS_KEY
 import me.kafuuneko.rpclient.libs.backup.BackupArchiveFormat.VERSION
 import me.kafuuneko.rpclient.libs.backup.BackupDatabaseCodec.readRows
 import me.kafuuneko.rpclient.libs.backup.BackupDatabaseCodec.tableRows
+import me.kafuuneko.rpclient.libs.character.CharacterCardMapper
+import me.kafuuneko.rpclient.libs.character.LorebookCodec
+import me.kafuuneko.rpclient.libs.room.entity.Character
+import me.kafuuneko.rpclient.libs.room.entity.Lorebook
+import me.kafuuneko.rpclient.libs.room.entity.LorebookEntry
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -38,22 +44,25 @@ internal class PortableBackupDocumentWriter(
         writeRemainingTables()
     }
 
-    /** 保存角色卡和模型关联的可读文档。 */
+    /** 保存可直接由角色卡导入器读取的 Character Card V2 JSON。 */
     private fun writeCharacters() {
-        // 角色可读字段与无损原始行同时输出，保留模型关联。
+        val gson = Gson()
+        val mapper = CharacterCardMapper(gson)
         val characterRows = rows("character")
+        val lorebooks = rows("lorebooks").objects()
+        val lorebookEntries = rows("lorebook_entries").objects()
         own("character")
-        characterRows.objects().forEach { character ->
-            val id = character.optLong("id")
-            val relations = filtered("character_llm_provider_associations", "characterId", id)
-            writeText(File(mRoot, "characters/character-" + id + ".json"),
-                JSONObject()
-                    .put("format", "rpclient-character")
-                    .put("version", VERSION)
-                    .put("character", character)
-                    .put("providerAssociations", relations)
-                    .put(TABLE_ROWS_KEY, tableRows("character" to JSONArray().put(character)))
-                    .toString(2))
+        characterRows.objects().forEach { row ->
+            val character = gson.fromJson(row.toString(), Character::class.java)
+            val boundBook = lorebooks.firstOrNull {
+                it.optLong("id") == character.characterLorebookId
+            }?.let { gson.fromJson(it.toString(), Lorebook::class.java) }
+            val boundEntries = if (boundBook == null) emptyList() else lorebookEntries
+                .filter { it.optLong("lorebookId") == boundBook.id }
+                .map { gson.fromJson(it.toString(), LorebookEntry::class.java) }
+            val card = JSONObject(mapper.toV2Json(character, boundBook, boundEntries))
+                .put(TABLE_ROWS_KEY, tableRows("character" to JSONArray().put(row)))
+            writeText(File(mRoot, "characters/character-" + character.id + ".json"), card.toString(2))
         }
     }
 
@@ -185,28 +194,31 @@ internal class PortableBackupDocumentWriter(
         }
     }
 
-    /** 保存世界书和条目，保持排序规则。 */
+    /** 保存与独立世界书导入器兼容的 SillyTavern JSON。 */
     private fun writeWorldbooks() {
-        // 按世界书归集条目，仍保存完整表字段。
+        val gson = Gson()
+        val codec = LorebookCodec(gson)
         val worldbooks = rows("lorebooks")
         own("lorebooks")
         val worldbookEntries = rows("lorebook_entries")
         own("lorebook_entries")
-        worldbooks.objects().forEach { book ->
-            val id = book.optLong("id")
-            val entries = worldbookEntries.objects().filter { it.optLong("lorebookId") == id }
+        worldbooks.objects().forEach { row ->
+            val book = gson.fromJson(row.toString(), Lorebook::class.java)
+            val entries = worldbookEntries.objects()
+                .filter { it.optLong("lorebookId") == book.id }
                 .sortedWith(compareBy<JSONObject> { it.optInt("order") }.thenBy { it.optLong("id") })
-                .toJsonArray()
-            writeText(File(mRoot, "worldbooks/worldbook-" + id + ".json"),
-                JSONObject()
-                    .put("format", "rpclient-worldbook")
-                    .put("version", VERSION)
-                    .put("worldbook", book)
-                    .put("entries", entries)
-                    .put(TABLE_ROWS_KEY, tableRows(
-                        "lorebooks" to JSONArray().put(book),
-                        "lorebook_entries" to entries
-                    )).toString(2))
+                .map { gson.fromJson(it.toString(), LorebookEntry::class.java) }
+            val entryRows = JSONArray().apply {
+                worldbookEntries.objects().filter { it.optLong("lorebookId") == book.id }
+                    .sortedWith(compareBy<JSONObject> { it.optInt("order") }.thenBy { it.optLong("id") })
+                    .forEach { put(it) }
+            }
+            val document = JSONObject(codec.toLorebookJson(book, entries))
+                .put(TABLE_ROWS_KEY, tableRows(
+                    "lorebooks" to JSONArray().put(row),
+                    "lorebook_entries" to entryRows
+                ))
+            writeText(File(mRoot, "worldbooks/worldbook-" + book.id + ".json"), document.toString(2))
         }
     }
 
