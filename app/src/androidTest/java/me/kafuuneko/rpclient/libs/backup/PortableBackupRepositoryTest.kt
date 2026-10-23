@@ -89,6 +89,11 @@ class PortableBackupRepositoryTest {
             val rows = zip.getInputStream(zip.getEntry("app-data/other-tables.jsonl")).reader().readText()
             assertFalse(rows.contains("search_chunks_fts_segments"))
         }
+        val editedArchive = File(root, "editable-attachments").apply { mkdirs() }
+        BackupArchiveFiles.extractArchive(context, Uri.fromFile(archive), editedArchive)
+        File(editedArchive, "attachments/other-files/${prepared.file.hash}")
+            .writeText("edited background")
+        repackDirectory(editedArchive, archive)
         db.execSQL("DELETE FROM search_chunks")
         db.execSQL("DELETE FROM backup_probe")
         File(context.filesDir, "manifest.json").writeText("changed")
@@ -114,9 +119,13 @@ class PortableBackupRepositoryTest {
             assertTrue(it.moveToFirst())
             assertEquals("test log", it.getString(0))
         }
-        assertEquals("background", File(context.getDir("repository", 0), prepared.file.hash).readText())
+        val restoredBackground = FileRepository(context, primary).getFileEntity(prepared.file.uuid)
+        assertTrue(restoredBackground != null)
+        assertEquals(
+            "edited background",
+            File(context.getDir("repository", 0), restoredBackground!!.hash).readText()
+        )
         assertEquals("private file", File(context.filesDir, "manifest.json").readText())
-        assertTrue(FileRepository(context, primary).getFileEntity(prepared.file.uuid) != null)
     }
 
     /** 编辑 ZIP 后 manifest 的导出时摘要允许过期，但路径安全校验仍然生效。 */
