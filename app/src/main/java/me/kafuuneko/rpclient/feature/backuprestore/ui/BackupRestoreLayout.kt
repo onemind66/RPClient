@@ -10,13 +10,20 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.ContentCopy
+import androidx.compose.material.icons.rounded.ExpandLess
+import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.FileDownload
 import androidx.compose.material.icons.rounded.FileUpload
@@ -26,15 +33,24 @@ import androidx.compose.material.icons.rounded.Security
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -374,6 +390,10 @@ private fun RestoreSection(
  */
 @Composable
 private fun StatusCard(state: BackupRestoreUiState.Normal) {
+    var detailsExpanded by remember(state.technicalDetails) { mutableStateOf(false) }
+    var detailsCopied by remember(state.technicalDetails) { mutableStateOf(false) }
+    val clipboardManager = LocalClipboardManager.current
+
     // 外层卡片提供柔和背景与边框
     AppCard(
         modifier = Modifier.fillMaxWidth(),
@@ -433,10 +453,78 @@ private fun StatusCard(state: BackupRestoreUiState.Normal) {
                         modifier = Modifier.size(20.dp)
                     )
                     Text(
-                        text = stringResource(statusRes),
+                        text = state.statusMessage ?: stringResource(statusRes),
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurface
+                        color = if (isFailure) MaterialTheme.colorScheme.error
+                            else MaterialTheme.colorScheme.onSurface
                     )
+                }
+            }
+
+            state.technicalDetails?.let { details ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { detailsExpanded = !detailsExpanded },
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = stringResource(
+                            if (detailsExpanded) R.string.backup_hide_technical_details
+                            else R.string.backup_show_technical_details
+                        ),
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Icon(
+                        imageVector = if (detailsExpanded) Icons.Rounded.ExpandLess
+                            else Icons.Rounded.ExpandMore,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                }
+
+                if (detailsExpanded) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        TextButton(
+                            onClick = {
+                                clipboardManager.setText(AnnotatedString(details))
+                                detailsCopied = true
+                            }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.ContentCopy,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                stringResource(
+                                    if (detailsCopied) R.string.copied_to_clipboard
+                                    else R.string.backup_copy_technical_details
+                                )
+                            )
+                        }
+                    }
+                    SelectionContainer {
+                        Text(
+                            text = details,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 280.dp)
+                                .verticalScroll(rememberScrollState())
+                                .padding(10.dp),
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                fontFamily = FontFamily.Monospace
+                            ),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             }
         }

@@ -1,10 +1,13 @@
 package me.kafuuneko.rpclient.feature.backuprestore
 
 import android.net.Uri
+import android.util.Log
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
+import java.io.PrintWriter
+import java.io.StringWriter
 import kotlinx.coroutines.withContext
 import me.kafuuneko.rpclient.R
 import me.kafuuneko.rpclient.feature.backuprestore.presentation.BackupDialogState
@@ -52,8 +55,8 @@ class BackupRestoreViewModel : CoreViewModelWithEvent<BackupRestoreUiIntent, Bac
                 state.copy(status = R.string.backup_export_success).setup()
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (_: Exception) {
-                state.copy(status = R.string.backup_failure_detail).setup()
+            } catch (error: Exception) {
+                showFailure("Backup export", error)
             }
         }
     }
@@ -93,11 +96,43 @@ class BackupRestoreViewModel : CoreViewModelWithEvent<BackupRestoreUiIntent, Bac
                     if ((error as? BackupRestoreException)?.restartRequired == true) {
                         requireRestart()
                     } else {
-                        BackupRestoreUiState.Normal(status = R.string.backup_failure_detail).setup()
+                        showFailure("Backup restore", error)
                     }
                 }
             }
         }
+    }
+
+    /**
+     * Preserve the full exception chain for diagnosis while showing the most specific cause
+     * directly in the current-status card.
+     */
+    private fun showFailure(operation: String, error: Exception) {
+        val diagnostic = buildString {
+            appendLine("Operation: " + operation)
+            appendLine("Timestamp (UTC epoch millis): " + System.currentTimeMillis())
+            appendLine()
+            val stackTrace = StringWriter()
+            error.printStackTrace(PrintWriter(stackTrace))
+            append(stackTrace.toString())
+        }
+        Log.e("BackupRestore", operation + " failed", error)
+
+        var rootCause: Throwable = error
+        val seen = mutableSetOf<Throwable>()
+        while (rootCause.cause != null && seen.add(rootCause)) {
+            rootCause = rootCause.cause!!
+        }
+        val reason = rootCause.message?.takeIf { it.isNotBlank() }
+            ?: rootCause.javaClass.name
+        val current = getOrNull<BackupRestoreUiState.Normal>()
+            ?: BackupRestoreUiState.Normal()
+        current.copy(
+            operation = BackupOperation.Idle,
+            status = R.string.backup_failure_detail,
+            statusMessage = operation + " failed: " + reason,
+            technicalDetails = diagnostic
+        ).setup()
     }
 
     /** 撤销未执行的恢复选择。 */

@@ -1355,7 +1355,10 @@
     <string name="story_markdown_edit">Edit raw text</string>
     <string name="scroll_to_top">Scroll to top</string>
     <string name="scroll_to_bottom">Scroll to bottom</string>
-    <string name="backup_failure_detail">Check the backup file and available storage, then try again.</string>
+    <string name="backup_failure_detail">The operation failed. Review the technical details below.</string>
+    <string name="backup_show_technical_details">Show technical details</string>
+    <string name="backup_hide_technical_details">Hide technical details</string>
+    <string name="backup_copy_technical_details">Copy technical details</string>
     <string name="backup_experimental_title">Experimental Feature</string>
     <string name="backup_experimental_desc">Backup and restore is an experimental feature. Cross-device and cross-version reliability and data integrity have not been fully verified. Please safeguard your important data. Restoring will completely overwrite existing data, so proceed with caution.</string>
     <string name="backup_export_title">Export Complete Backup</string>
