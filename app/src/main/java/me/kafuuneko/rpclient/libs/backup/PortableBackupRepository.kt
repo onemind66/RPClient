@@ -402,6 +402,7 @@ class PortableBackupRepository(
         val indexDocument = JSONObject(indexFile.readText(Charsets.UTF_8))
         val indexRows = indexDocument.getJSONObject(TABLE_ROWS_KEY).getJSONArray("files")
         val rowsByUuid = linkedMapOf<String, JSONObject>()
+        val originalHashByUuid = linkedMapOf<String, String>()
         val rowsByHash = linkedMapOf<String, MutableList<JSONObject>>()
         indexRows.objects().forEach { row ->
             val uuid = row.optString("uuid")
@@ -410,6 +411,7 @@ class PortableBackupRepository(
                 "The portable file index contains an invalid file row."
             }
             rowsByUuid[uuid] = row
+            originalHashByUuid[uuid] = hash.lowercase()
             rowsByHash.getOrPut(hash.lowercase()) { mutableListOf() }.add(row)
         }
 
@@ -441,6 +443,11 @@ class PortableBackupRepository(
                 val oldHash = file.name.lowercase()
                 rowsByHash[oldHash].orEmpty().forEach { row ->
                     val digest = BackupArchiveFiles.sha256(file)
+                    val uuid = row.optString("uuid")
+                    val previous = digestByUuid.putIfAbsent(uuid, digest)
+                    require(previous == null || previous == digest) {
+                        "Conflicting edited copies exist for attachment " + uuid
+                    }
                     row.put("hash", digest)
                     val destination = File(canonical, digest)
                     if (destination.canonicalFile != file.canonicalFile) {
@@ -460,7 +467,7 @@ class PortableBackupRepository(
                 val avatarUuid = row.optString("avatar")
                 if (avatarUuid.isBlank()) return@forEach
                 val fileRow = rowsByUuid[avatarUuid] ?: return@forEach
-                val oldHash = fileRow.optString("hash")
+                val oldHash = originalHashByUuid[avatarUuid] ?: fileRow.optString("hash")
                 val categoryFile = File(
                     root,
                     "attachments/characters/character-${row.optLong("id")}-avatar-$oldHash"
@@ -475,7 +482,7 @@ class PortableBackupRepository(
             imageRows?.objects()?.forEach { image ->
                 val uuid = image.optString("imageUuid")
                 val fileRow = rowsByUuid[uuid] ?: return@forEach
-                val oldHash = fileRow.optString("hash")
+                val oldHash = originalHashByUuid[uuid] ?: fileRow.optString("hash")
                 val categoryFile = File(
                     root,
                     "attachments/chat-images/${image.optString("messageType")}-" +
@@ -484,6 +491,13 @@ class PortableBackupRepository(
                 if (categoryFile.isFile) adoptAttachment(categoryFile, uuid, oldHash)
             }
             writeText(imageIndex, imageDocument.toString(2))
+        }
+        rowsByUuid.forEach { (uuid, row) ->
+            val hash = row.optString("hash")
+            val asset = File(canonical, hash)
+            require(asset.isFile && BackupArchiveFiles.sha256(asset).equals(hash, ignoreCase = true)) {
+                "An edited attachment is missing or has an invalid digest: " + uuid
+            }
         }
         writeText(indexFile, indexDocument.toString(2))
     }
