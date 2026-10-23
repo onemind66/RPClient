@@ -819,6 +819,7 @@ class PortableBackupRepository(
                                     document.put(TABLE_ROWS_KEY, it)
                                 }
                                 if (isHeader) {
+                                    hasHeader = true
                                     val session = document.optJSONObject("session")
                                         ?: error("Group-chat header is missing its session: " + file.name)
                                     tableRows.put("group_chat_sessions", JSONArray().put(session))
@@ -838,9 +839,7 @@ class PortableBackupRepository(
                             }
                         }
                     }
-                    require(!file.readLines(Charsets.UTF_8).firstOrNull().isNullOrBlank()) {
-                        "Group-chat document is empty: " + file.name
-                    }
+                    require(hasHeader) { "Group-chat document is empty: " + file.name }
                     require(file.delete()) { "Could not replace group-chat document: " + file.name }
                     require(temporary.renameTo(file)) {
                         "Could not finalize group-chat document: " + file.name
