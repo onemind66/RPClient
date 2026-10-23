@@ -151,6 +151,44 @@ class PortableBackupRepositoryTest {
         }.isFailure)
     }
 
+    /** Standard Character Card V2 edits override the preserved internal row during restore. */
+    @Test
+    fun editableCharacterCardFieldsAreRestored() = runBlocking {
+        primary.openHelper.writableDatabase.execSQL(
+            "INSERT INTO character (" +
+                "id, name, avatar, characterTags, description, creatorNotes, personality, scenario, " +
+                "firstMessages, examplesOfDialogue, postHistoryInstructions, systemPrompt, creator, " +
+                "characterVersion, alternateGreetings, extensionsJson, depthPromptPrompt, " +
+                "depthPromptDepth, depthPromptRole, characterLorebookId, backgroundFileUuid" +
+                ") VALUES (1, 'Original name', '', '[]', 'Original description', '', '', '', " +
+                "'Original greeting', '', '', '', '', '', '[]', '{}', '', 4, 0, 0, NULL)"
+        )
+        val archive = File(root, "editable-character.zip")
+        val repository = PortableBackupRepository(
+            context, primary, logs, BackupArchiveRepository(context, primary)
+        )
+        repository.exportArchive(Uri.fromFile(archive))
+
+        val unpacked = File(root, "editable-character").apply { mkdirs() }
+        BackupArchiveFiles.extractArchive(context, Uri.fromFile(archive), unpacked)
+        val characterFile = File(unpacked, "characters/character-1.json")
+        val document = JSONObject(characterFile.readText())
+        document.getJSONObject("data").put("name", "Edited name")
+        document.getJSONObject("data").put("description", "Edited description")
+        characterFile.writeText(document.toString(2))
+        repackDirectory(unpacked, archive)
+
+        repository.restoreArchive(Uri.fromFile(archive))
+        openDatabases()
+        primary.openHelper.readableDatabase.query(
+            "SELECT name, description FROM character WHERE id = 1"
+        ).use {
+            assertTrue(it.moveToFirst())
+            assertEquals("Edited name", it.getString(0))
+            assertEquals("Edited description", it.getString(1))
+        }
+    }
+
     /** settings.json edits are applied even when the archived raw XML still has the old values. */
     @Test
     fun editableSettingsJsonOverridesRawPreferenceXml() = runBlocking {
