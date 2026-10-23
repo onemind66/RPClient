@@ -160,6 +160,53 @@ class PortableBackupRepositoryTest {
         }.isFailure)
     }
 
+    /** Visible story title and chapter content edits update their exact Room records. */
+    @Test
+    fun editableStoryDocumentFieldsAreRestored() = runBlocking {
+        primary.openHelper.writableDatabase.execSQL(
+            "INSERT INTO stories " +
+                "(id, title, memory, summary, authorNote, includeUserPersona, " +
+                "worldInfoGenerationStep, revision, createTime, latestTime) " +
+                "VALUES (3, 'Original story', '', '', '', 0, 0, 0, 1000, 1000)"
+        )
+        primary.openHelper.writableDatabase.execSQL(
+            "INSERT INTO story_chapters " +
+                "(id, storyId, volumeId, title, content, continuationGuidance, sortOrder, " +
+                "contentRevision, createTime, latestTime) " +
+                "VALUES (4, 3, NULL, 'Chapter one', 'Original chapter', '', 0, 0, 1000, 1000)"
+        )
+        val archive = File(root, "editable-story.zip")
+        val repository = PortableBackupRepository(
+            context, primary, logs, BackupArchiveRepository(context, primary)
+        )
+        repository.exportArchive(Uri.fromFile(archive))
+
+        val unpacked = File(root, "editable-story").apply { mkdirs() }
+        BackupArchiveFiles.extractArchive(context, Uri.fromFile(archive), unpacked)
+        val storyFile = File(unpacked, "stories/story-3.rpstory.json")
+        val document = JSONObject(storyFile.readText())
+        document.getJSONObject("story").put("title", "Edited story")
+        document.getJSONObject("story").getJSONArray("ungroupedChapters")
+            .getJSONObject(0).put("content", "Edited chapter")
+        storyFile.writeText(document.toString(2))
+        repackDirectory(unpacked, archive)
+
+        repository.restoreArchive(Uri.fromFile(archive))
+        openDatabases()
+        primary.openHelper.readableDatabase.query(
+            "SELECT title FROM stories WHERE id = 3"
+        ).use {
+            assertTrue(it.moveToFirst())
+            assertEquals("Edited story", it.getString(0))
+        }
+        primary.openHelper.readableDatabase.query(
+            "SELECT content FROM story_chapters WHERE id = 4"
+        ).use {
+            assertTrue(it.moveToFirst())
+            assertEquals("Edited chapter", it.getString(0))
+        }
+    }
+
     /** Chat JSONL remains SillyTavern-importable and visible message edits restore to Room. */
     @Test
     fun editableChatJsonlFieldsAreRestored() = runBlocking {
