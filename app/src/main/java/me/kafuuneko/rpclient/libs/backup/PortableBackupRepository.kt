@@ -188,7 +188,7 @@ class PortableBackupRepository(
             require(version == VERSION || version == LEGACY_VERSION) {
                 "Unsupported portable backup version: " + version
             }
-            validateChecksums(stage, manifest.optJSONObject("files")
+            validateEditableInventory(stage, manifest.optJSONObject("files")
                 ?: error("The manifest does not list archive files."))
 
             if (version == LEGACY_VERSION && File(stage, "database/primary/schema.json").isFile) {
