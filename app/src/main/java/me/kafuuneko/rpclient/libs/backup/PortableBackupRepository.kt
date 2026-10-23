@@ -55,25 +55,44 @@ class PortableBackupRepository(
 ) {
 
     /**
+     * Export stages attach a stable operation label without swallowing cancellation or fatal errors.
+     */
+    private inline fun <T> withExportStage(stage: String, action: () -> T): T {
+        try {
+            return action()
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            throw IllegalStateException("Portable backup export failed during stage: " + stage + ".", error)
+        }
+    }
+
+    /**
      * 导出当前业务数据、设置和附件；完整 ZIP 按明文协议保存凭据。
      * @param destination 用户通过系统选择器创建的 ZIP 文档。
      */
     suspend fun exportArchive(destination: Uri) = withContext(Dispatchers.IO) {
         val stage = File(mContext.cacheDir, "portable-export-" + System.nanoTime())
-        check(stage.mkdirs()) { "Could not create temporary backup workspace." }
+        withExportStage("temporary workspace creation") {
+            check(stage.mkdirs()) { "Could not create temporary backup workspace." }
+        }
         try {
             // 业务行与附件在同一主库快照中导出，避免引用与物理文件错位。
-            createArchiveDirectories(stage)
+            withExportStage("archive directory setup") { createArchiveDirectories(stage) }
             val primaryDb = mDatabase.openHelper.writableDatabase
             val primaryTables = tableNames(primaryDb)
             primaryDb.beginTransaction()
             try {
-                writeText(File(stage, "app-data/database-schema.json"), schemaJson(primaryDb).toString(2))
+                withExportStage("primary database schema") {
+                    writeText(File(stage, "app-data/database-schema.json"), schemaJson(primaryDb).toString(2))
+                }
                 PortableBackupDocumentWriter(
                     primaryDb, primaryTables, stage,
                     mContext.getDir("repository", Context.MODE_PRIVATE)
                 ).writeAll()
-                exportAttachments(primaryDb, primaryTables, stage)
+                withExportStage("primary database attachments") {
+                    exportAttachments(primaryDb, primaryTables, stage)
+                }
                 primaryDb.setTransactionSuccessful()
             } finally {
                 primaryDb.endTransaction()
@@ -82,20 +101,23 @@ class PortableBackupRepository(
             val logsDb = mRequestLogDatabase.openHelper.writableDatabase
             logsDb.beginTransaction()
             try {
-                writeText(File(stage, "app-data/request-log-schema.json"), schemaJson(logsDb).toString(2))
-                exportRequestLogs(logsDb, stage)
+                withExportStage("request-log database schema") {
+                    writeText(File(stage, "app-data/request-log-schema.json"), schemaJson(logsDb).toString(2))
+                }
+                withExportStage("request-log documents") { exportRequestLogs(logsDb, stage) }
                 logsDb.setTransactionSuccessful()
             } finally {
                 logsDb.endTransaction()
             }
 
             // 设置和私有文件保持原始格式，manifest 在全部内容写完后生成。
-            exportSettings(stage)
-            copyDirectory(mContext.filesDir, File(stage, "app-data/private-files"))
+            withExportStage("shared preferences and settings") { exportSettings(stage) }
+            withExportStage("private application files") {
+                copyDirectory(mContext.filesDir, File(stage, "app-data/private-files"))
+            }
 
-            writeManifest(stage)
-
-            writeArchive(stage, destination)
+            withExportStage("manifest and checksums") { writeManifest(stage) }
+            withExportStage("ZIP destination write") { writeArchive(stage, destination) }
         } finally {
             stage.deleteRecursively()
         }

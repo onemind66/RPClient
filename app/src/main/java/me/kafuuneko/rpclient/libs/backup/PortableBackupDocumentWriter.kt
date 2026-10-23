@@ -41,17 +41,28 @@ internal class PortableBackupDocumentWriter(
     private fun filtered(table: String, column: String, value: Any?): JSONArray =
         if (table in mTables) readRows(mDatabase, table, column, value) else JSONArray()
 
+    /** Add a feature label to export errors while preserving cancellation semantics. */
+    private inline fun <T> withExportStage(stage: String, action: () -> T): T {
+        try {
+            return action()
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            throw IllegalStateException("Portable backup export failed during stage: " + stage + ".", error)
+        }
+    }
+
     /** 按功能输出完整数据行，并将剩余表写入兼容文档。 */
     fun writeAll() {
-        writeCharacters()
-        writeStories()
-        writeChats()
-        writeGroups()
-        writeWorldbooks()
-        writeProviders()
-        writeRegex()
-        writeUsageAndFiles()
-        writeRemainingTables()
+        withExportStage("character documents") { writeCharacters() }
+        withExportStage("story documents") { writeStories() }
+        withExportStage("chat documents") { writeChats() }
+        withExportStage("group-chat documents") { writeGroups() }
+        withExportStage("worldbook documents") { writeWorldbooks() }
+        withExportStage("provider configuration documents") { writeProviders() }
+        withExportStage("regex documents") { writeRegex() }
+        withExportStage("usage and file metadata") { writeUsageAndFiles() }
+        withExportStage("remaining database tables") { writeRemainingTables() }
     }
 
     /** 保存可直接由角色卡导入器读取的 Character Card V2 JSON。 */

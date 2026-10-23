@@ -118,13 +118,19 @@ class BackupRestoreViewModel : CoreViewModelWithEvent<BackupRestoreUiIntent, Bac
         }
         Log.e("BackupRestore", operation + " failed", error)
 
-        var rootCause: Throwable = error
+        val causes = mutableListOf<Throwable>()
         val seen = mutableSetOf<Throwable>()
-        while (rootCause.cause != null && seen.add(rootCause)) {
-            rootCause = rootCause.cause!!
+        var cause: Throwable? = error
+        while (cause != null && seen.add(cause)) {
+            causes += cause
+            cause = cause.cause
         }
-        val reason = rootCause.message?.takeIf { it.isNotBlank() }
-            ?: rootCause.javaClass.name
+        // Prefer a contextual export stage over a low-level exception with no useful message.
+        val reason = causes.firstNotNullOfOrNull { item ->
+            item.message?.takeIf { it.contains("failed during stage:", ignoreCase = true) }
+        } ?: causes.lastOrNull()?.let { item ->
+            item.message?.takeIf { it.isNotBlank() } ?: item.javaClass.name
+        } ?: error.javaClass.name
         val current = getOrNull<BackupRestoreUiState.Normal>()
             ?: BackupRestoreUiState.Normal()
         current.copy(
