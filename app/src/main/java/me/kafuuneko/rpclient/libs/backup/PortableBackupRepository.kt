@@ -3,11 +3,13 @@ package me.kafuuneko.rpclient.libs.backup
 import android.content.Context
 import android.content.SharedPreferences
 import android.net.Uri
+import android.util.Xml
 import androidx.sqlite.db.SupportSQLiteDatabase
 import java.io.File
 import java.io.FileInputStream
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
+import org.xmlpull.v1.XmlSerializer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import me.kafuuneko.rpclient.libs.backup.BackupArchiveFiles.copyDirectory
@@ -219,6 +221,8 @@ class PortableBackupRepository(
                 JSONObject(logsSchemaFile.readText(Charsets.UTF_8)), requestRows, stagedLogs
             )
 
+            applyEditableSettings(stage)
+
             replaceLiveData(
                 rollback, stagedPrimary, stagedLogs,
                 File(stage, "app-data/shared-prefs"),
@@ -263,6 +267,98 @@ class PortableBackupRepository(
                 .put("rawPreferenceXml", "app-data/shared-prefs/")
                 .put("note", "Preferences are provided as readable JSON and preserved as original XML for exact restoration.")
                 .toString(2))
+    }
+
+    /**
+     * Apply the editable settings.json as the source of truth before replacing live preferences.
+     * Existing XML is retained as an exact export reference only; relying on it would silently
+     * ignore user edits made to the readable JSON document.
+     */
+    private fun applyEditableSettings(root: File) {
+        val settingsFile = File(root, "settings.json")
+        require(settingsFile.isFile) { "The editable settings.json file is missing." }
+        val settings = JSONObject(settingsFile.readText(Charsets.UTF_8))
+        require(settings.optString("format") == FORMAT) { "Unsupported settings document format." }
+        val preferences = settings.optJSONObject("preferences")
+            ?: error("The settings document has no preferences object.")
+        val prefsDirectory = File(root, "app-data/shared-prefs")
+        require(prefsDirectory.isDirectory) { "Backup preference files are missing." }
+        prefsDirectory.listFiles().orEmpty()
+            .filter { it.isFile && it.extension == "xml" }
+            .forEach { require(it.delete()) { "Could not replace staged preference file: " + it.name } }
+
+        val names = preferences.keys()
+        while (names.hasNext()) {
+            val name = names.next()
+            require(name.matches(Regex("[A-Za-z0-9_.-]{1,180}"))) {
+                "Invalid preference file name: " + name
+            }
+            val values = preferences.getJSONObject(name)
+            val target = File(prefsDirectory, "$name.xml")
+            target.outputStream().buffered().use { output ->
+                val serializer: XmlSerializer = Xml.newSerializer()
+                serializer.setOutput(output, Charsets.UTF_8.name())
+                serializer.startDocument(Charsets.UTF_8.name(), true)
+                serializer.startTag(null, "map")
+                val keys = values.keys()
+                while (keys.hasNext()) {
+                    val key = keys.next()
+                    require(key.isNotEmpty()) { "Preference keys must not be empty." }
+                    when (val value = values.get(key)) {
+                        is String -> {
+                            serializer.startTag(null, "string")
+                            serializer.attribute(null, "name", key)
+                            serializer.text(value)
+                            serializer.endTag(null, "string")
+                        }
+                        is Boolean -> {
+                            serializer.startTag(null, "boolean")
+                            serializer.attribute(null, "name", key)
+                            serializer.attribute(null, "value", value.toString())
+                            serializer.endTag(null, "boolean")
+                        }
+                        is Number -> {
+                            val numeric = value.toDouble()
+                            require(numeric.isFinite()) { "Non-finite preference number: " + key }
+                            val isIntegral = numeric % 1.0 == 0.0
+                            val tag = when {
+                                !isIntegral -> "float"
+                                numeric >= Int.MIN_VALUE.toDouble() && numeric <= Int.MAX_VALUE.toDouble() -> "int"
+                                numeric >= Long.MIN_VALUE.toDouble() && numeric <= Long.MAX_VALUE.toDouble() -> "long"
+                                else -> error("Preference number is out of range: " + key)
+                            }
+                            serializer.startTag(null, tag)
+                            serializer.attribute(null, "name", key)
+                            serializer.attribute(null, "value", when (tag) {
+                                "float" -> numeric.toFloat().toString()
+                                else -> value.toString()
+                            })
+                            serializer.endTag(null, tag)
+                        }
+                        is JSONArray -> {
+                            val items = (0 until value.length()).map { index ->
+                                value.get(index).also {
+                                    require(it is String) { "Preference set must contain only strings: " + key }
+                                } as String
+                            }
+                            serializer.startTag(null, "set")
+                            serializer.attribute(null, "name", key)
+                            items.forEach { item ->
+                                serializer.startTag(null, "string")
+                                serializer.text(item)
+                                serializer.endTag(null, "string")
+                            }
+                            serializer.endTag(null, "set")
+                        }
+                        else -> error("Unsupported editable preference value for key: " + key)
+                    }
+                }
+                serializer.endTag(null, "map")
+                serializer.endDocument()
+                serializer.flush()
+                output.flush()
+            }
+        }
     }
 
     /** 将 Android 偏好类型转为便于人工读取的 JSON。 */
