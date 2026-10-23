@@ -674,7 +674,6 @@ class PortableBackupRepository(
                         .put("worldInfoStateJson", headerExtension?.optString("world_info_state") ?: "{}")
                         .put("autoSummaryPaused", headerExtension?.optBoolean("auto_summary_paused") ?: false)
                 }
-                val oldSessionId = session.optLong("id")
                 val oldHeaderRows = header.optJSONObject(TABLE_ROWS_KEY)
                 val oldSummary = oldHeaderRows?.optJSONArray("chat_messages")?.objects()
                     ?.firstOrNull { it.optString("source").equals("Summary", true) }
