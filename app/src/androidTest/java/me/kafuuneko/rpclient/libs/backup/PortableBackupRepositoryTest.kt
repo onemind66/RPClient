@@ -148,7 +148,7 @@ class PortableBackupRepositoryTest {
                 .put("sha256", "0".repeat(64)))
 
         // Changed content, a missing indexed file, and a new file are valid edit operations.
-        BackupArchiveFiles.validateChecksums(inventory, manifestFiles)
+        BackupArchiveFiles.validateEditableInventory(inventory, manifestFiles)
         assertTrue(changed.isFile)
         assertTrue(added.isFile)
 
