@@ -74,16 +74,27 @@ internal class PortableBackupDocumentWriter(
         val lorebookEntries = rows("lorebook_entries").objects()
         own("character")
         characterRows.objects().forEach { row ->
-            val character = gson.fromJson(row.toString(), Character::class.java)
-            val boundBook = lorebooks.firstOrNull {
-                it.optLong("id") == character.characterLorebookId
-            }?.let { gson.fromJson(it.toString(), Lorebook::class.java) }
-            val boundEntries = if (boundBook == null) emptyList() else lorebookEntries
-                .filter { it.optLong("lorebookId") == boundBook.id }
-                .map { gson.fromJson(it.toString(), LorebookEntry::class.java) }
-            val card = JSONObject(mapper.toV2Json(character, boundBook, boundEntries))
-                .put(TABLE_ROWS_KEY, tableRows("character" to JSONArray().put(row)))
-            writeText(File(mRoot, "characters/character-" + character.id + ".json"), card.toString(2))
+            val characterId = row.optLong("id")
+            val character = withExportStage("character row id $characterId deserialization") {
+                gson.fromJson(row.toString(), Character::class.java)
+                    ?: error("Character row deserialized to null.")
+            }
+            val boundBook = withExportStage("character row id $characterId worldbook resolution") {
+                lorebooks.firstOrNull { it.optLong("id") == character.characterLorebookId }
+                    ?.let { gson.fromJson(it.toString(), Lorebook::class.java) }
+            }
+            val boundEntries = withExportStage("character row id $characterId worldbook entry mapping") {
+                if (boundBook == null) emptyList() else lorebookEntries
+                    .filter { it.optLong("lorebookId") == boundBook.id }
+                    .map { gson.fromJson(it.toString(), LorebookEntry::class.java) }
+            }
+            val card = withExportStage("character row id $characterId Character Card V2 mapping") {
+                JSONObject(mapper.toV2Json(character, boundBook, boundEntries))
+                    .put(TABLE_ROWS_KEY, tableRows("character" to JSONArray().put(row)))
+            }
+            withExportStage("character row id $characterId JSON document write") {
+                writeText(File(mRoot, "characters/character-" + character.id + ".json"), card.toString(2))
+            }
         }
     }
 

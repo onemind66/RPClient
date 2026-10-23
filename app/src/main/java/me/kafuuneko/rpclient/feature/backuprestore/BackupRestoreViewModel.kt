@@ -94,7 +94,7 @@ class BackupRestoreViewModel : CoreViewModelWithEvent<BackupRestoreUiIntent, Bac
                     requireRestart()
                 } catch (error: Exception) {
                     if ((error as? BackupRestoreException)?.restartRequired == true) {
-                        requireRestart()
+                        requireRestart(error)
                     } else {
                         showFailure("Backup restore", error)
                     }
@@ -107,15 +107,17 @@ class BackupRestoreViewModel : CoreViewModelWithEvent<BackupRestoreUiIntent, Bac
      * Preserve the full exception chain for diagnosis while showing the most specific cause
      * directly in the current-status card.
      */
+    private fun buildDiagnostic(operation: String, error: Exception): String = buildString {
+        appendLine("Operation: " + operation)
+        appendLine("Timestamp (UTC epoch millis): " + System.currentTimeMillis())
+        appendLine()
+        val stackTrace = StringWriter()
+        error.printStackTrace(PrintWriter(stackTrace))
+        append(stackTrace.toString())
+    }
+
     private fun showFailure(operation: String, error: Exception) {
-        val diagnostic = buildString {
-            appendLine("Operation: " + operation)
-            appendLine("Timestamp (UTC epoch millis): " + System.currentTimeMillis())
-            appendLine()
-            val stackTrace = StringWriter()
-            error.printStackTrace(PrintWriter(stackTrace))
-            append(stackTrace.toString())
-        }
+        val diagnostic = buildDiagnostic(operation, error)
         Log.e("BackupRestore", operation + " failed", error)
 
         val causes = mutableListOf<Throwable>()
@@ -126,7 +128,8 @@ class BackupRestoreViewModel : CoreViewModelWithEvent<BackupRestoreUiIntent, Bac
             cause = cause.cause
         }
         // Prefer a contextual export stage over a low-level exception with no useful message.
-        val reason = causes.firstNotNullOfOrNull { item ->
+        // Nested stages are more specific than their enclosing document/operation stages.
+        val reason = causes.asReversed().firstNotNullOfOrNull { item ->
             item.message?.takeIf { it.contains("failed during stage:", ignoreCase = true) }
         } ?: causes.lastOrNull()?.let { item ->
             item.message?.takeIf { it.isNotBlank() } ?: item.javaClass.name
@@ -165,9 +168,13 @@ class BackupRestoreViewModel : CoreViewModelWithEvent<BackupRestoreUiIntent, Bac
     }
 
     /** 关闭数据库后的终态只等待宿主重启，不再接受业务输入。 */
-    private fun requireRestart() {
+    private fun requireRestart(error: Exception? = null) {
+        val diagnostic = error?.let {
+            Log.e("BackupRestore", "Backup restore requires restart after failure", it)
+            buildDiagnostic("Backup restore", it)
+        }
         BackupRestoreUiState.Normal(operation = BackupOperation.Restarting,
-            status = R.string.backup_restarting).setup()
+            status = R.string.backup_restarting, technicalDetails = diagnostic).setup()
         BackupRestoreViewEvent.RestartApp.tryEmit()
     }
 }

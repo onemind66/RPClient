@@ -54,9 +54,7 @@ class PortableBackupRepository(
     private val mLegacyRepository: BackupArchiveRepository
 ) {
 
-    /**
-     * Export stages attach a stable operation label without swallowing cancellation or fatal errors.
-     */
+    /** Add stable operation context without changing cancellation or restore-restart semantics. */
     private inline fun <T> withExportStage(stage: String, action: () -> T): T {
         try {
             return action()
@@ -64,6 +62,22 @@ class PortableBackupRepository(
             throw cancelled
         } catch (error: Exception) {
             throw IllegalStateException("Portable backup export failed during stage: " + stage + ".", error)
+        }
+    }
+
+    /** Preserve restart-required exceptions while attaching the restore stage as a suppressed detail. */
+    private suspend fun <T> withRestoreStage(stage: String, action: suspend () -> T): T {
+        try {
+            return action()
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (error: BackupRestoreException) {
+            error.addSuppressed(IllegalStateException(
+                "Portable backup restore failed during stage: " + stage + "."
+            ))
+            throw error
+        } catch (error: Exception) {
+            throw IllegalStateException("Portable backup restore failed during stage: " + stage + ".", error)
         }
     }
 
@@ -194,81 +208,96 @@ class PortableBackupRepository(
     suspend fun restoreArchive(source: Uri) = withContext(Dispatchers.IO) {
         val stage = File(mContext.cacheDir, "portable-restore-" + System.nanoTime())
         val rollback = File(mContext.cacheDir, "portable-rollback-" + System.nanoTime())
-        check(stage.mkdirs()) { "Could not create temporary restore workspace." }
+        withRestoreStage("temporary workspace creation") {
+            check(stage.mkdirs()) { "Could not create temporary restore workspace." }
+        }
         try {
-            extractArchive(mContext, source, stage)
-            val manifestFile = File(stage, "manifest.json")
-            require(manifestFile.isFile) { "This ZIP is missing manifest.json." }
-            val manifest = JSONObject(manifestFile.readText(Charsets.UTF_8))
-            // 格式识别后交给对应解码器，旧格式沿用既有恢复范围。
+            withRestoreStage("ZIP extraction and path validation") { extractArchive(mContext, source, stage) }
+            val manifest = withRestoreStage("manifest read and JSON parsing") {
+                val manifestFile = File(stage, "manifest.json")
+                require(manifestFile.isFile) { "This ZIP is missing manifest.json." }
+                JSONObject(manifestFile.readText(Charsets.UTF_8))
+            }
+            // Format detection dispatches legacy archives to the established restore implementation.
             if (manifest.optString("format") == "rpclient-backup") {
-                mLegacyRepository.restoreArchive(source)
+                withRestoreStage("legacy archive restore") { mLegacyRepository.restoreArchive(source) }
                 return@withContext
             }
-            require(manifest.optString("format") == FORMAT) { "This is not an RPClient portable data backup." }
-            val version = manifest.optInt("version", -1)
-            require(version == VERSION || version == LEGACY_VERSION) {
-                "Unsupported portable backup version: " + version
+            val version = withRestoreStage("portable format and version validation") {
+                require(manifest.optString("format") == FORMAT) {
+                    "This is not an RPClient portable data backup."
+                }
+                manifest.optInt("version", -1).also { archiveVersion ->
+                    require(archiveVersion == VERSION || archiveVersion == LEGACY_VERSION) {
+                        "Unsupported portable backup version: " + archiveVersion
+                    }
+                }
             }
-            validateEditableInventory(stage, manifest.optJSONObject("files")
-                ?: error("The manifest does not list archive files."))
+            withRestoreStage("manifest inventory and checksum validation") {
+                validateEditableInventory(stage, manifest.optJSONObject("files")
+                    ?: error("The manifest does not list archive files."))
+            }
 
             if (version == LEGACY_VERSION && File(stage, "database/primary/schema.json").isFile) {
                 val legacyPrimary = File(stage, "database/primary")
                 val legacyLogs = File(stage, "database/request-logs")
                 val stagedPrimary = File(stage, PRIMARY_DB)
                 val stagedLogs = File(stage, LOGS_DB)
-                reconstructDatabase(
-                    JSONObject(File(legacyPrimary, "schema.json").readText(Charsets.UTF_8)),
-                    readLegacyRows(legacyPrimary), stagedPrimary
-                )
-                reconstructDatabase(
-                    JSONObject(File(legacyLogs, "schema.json").readText(Charsets.UTF_8)),
-                    readLegacyRows(legacyLogs), stagedLogs
-                )
-                replaceLiveData(
-                    rollback, stagedPrimary, stagedLogs,
-                    File(stage, "settings/shared_prefs"),
-                    File(stage, "attachments/repository"),
-                    File(stage, "app-files")
-                )
+                withRestoreStage("legacy primary database reconstruction") {
+                    reconstructDatabase(JSONObject(File(legacyPrimary, "schema.json").readText(Charsets.UTF_8)),
+                        readLegacyRows(legacyPrimary), stagedPrimary)
+                }
+                withRestoreStage("legacy request-log database reconstruction") {
+                    reconstructDatabase(JSONObject(File(legacyLogs, "schema.json").readText(Charsets.UTF_8)),
+                        readLegacyRows(legacyLogs), stagedLogs)
+                }
+                withRestoreStage("legacy live-data replacement and rollback") {
+                    replaceLiveData(rollback, stagedPrimary, stagedLogs,
+                        File(stage, "settings/shared_prefs"), File(stage, "attachments/repository"),
+                        File(stage, "app-files"))
+                }
                 return@withContext
             }
 
-            require(version == VERSION) { "Legacy archive layout is incomplete." }
+            withRestoreStage("portable version 2 layout validation") {
+                require(version == VERSION) { "Legacy archive layout is incomplete." }
+            }
             val primarySchemaFile = File(stage, "app-data/database-schema.json")
             val logsSchemaFile = File(stage, "app-data/request-log-schema.json")
-            require(primarySchemaFile.isFile) { "The primary database schema is missing." }
-            require(logsSchemaFile.isFile) { "The request-log database schema is missing." }
-            applyEditableCharacterDocuments(stage)
-            applyEditableWorldbookDocuments(stage)
-            applyEditableRegexDocuments(stage)
-            applyEditableStoryDocuments(stage)
-            applyEditableChatDocuments(stage)
-            applyEditableGroupChatDocuments(stage)
-            applyEditableRawRowDocuments(stage)
-            applyEditableAttachmentDocuments(stage)
-            applyEditableSettings(stage)
-            val primaryRows = reconcileMessageImageRows(
-                collectTableRows(stage, excludePath = "app-data/request-logs.jsonl")
-            )
-            val requestRows = collectTableRows(stage, includePath = "app-data/request-logs.jsonl")
+            withRestoreStage("required database schema validation") {
+                require(primarySchemaFile.isFile) { "The primary database schema is missing." }
+                require(logsSchemaFile.isFile) { "The request-log database schema is missing." }
+            }
+            withRestoreStage("editable character documents") { applyEditableCharacterDocuments(stage) }
+            withRestoreStage("editable worldbook documents") { applyEditableWorldbookDocuments(stage) }
+            withRestoreStage("editable regex documents") { applyEditableRegexDocuments(stage) }
+            withRestoreStage("editable story documents") { applyEditableStoryDocuments(stage) }
+            withRestoreStage("editable chat documents") { applyEditableChatDocuments(stage) }
+            withRestoreStage("editable group-chat documents") { applyEditableGroupChatDocuments(stage) }
+            withRestoreStage("editable raw-row documents") { applyEditableRawRowDocuments(stage) }
+            withRestoreStage("editable attachment documents and file index") {
+                applyEditableAttachmentDocuments(stage)
+            }
+            withRestoreStage("editable preferences and settings") { applyEditableSettings(stage) }
+            val primaryRows = withRestoreStage("primary database row collection and image reconciliation") {
+                reconcileMessageImageRows(collectTableRows(stage, excludePath = "app-data/request-logs.jsonl"))
+            }
+            val requestRows = withRestoreStage("request-log row collection") {
+                collectTableRows(stage, includePath = "app-data/request-logs.jsonl")
+            }
             val stagedPrimary = File(stage, PRIMARY_DB)
             val stagedLogs = File(stage, LOGS_DB)
-            reconstructDatabase(
-                JSONObject(primarySchemaFile.readText(Charsets.UTF_8)), primaryRows, stagedPrimary
-            )
-            reconstructDatabase(
-                JSONObject(logsSchemaFile.readText(Charsets.UTF_8)), requestRows, stagedLogs
-            )
-
-
-            replaceLiveData(
-                rollback, stagedPrimary, stagedLogs,
-                File(stage, "app-data/shared-prefs"),
-                File(stage, "attachments/other-files"),
-                File(stage, "app-data/private-files")
-            )
+            withRestoreStage("primary database reconstruction and integrity validation") {
+                reconstructDatabase(JSONObject(primarySchemaFile.readText(Charsets.UTF_8)), primaryRows, stagedPrimary)
+            }
+            withRestoreStage("request-log database reconstruction and integrity validation") {
+                reconstructDatabase(JSONObject(logsSchemaFile.readText(Charsets.UTF_8)), requestRows, stagedLogs)
+            }
+            withRestoreStage("live-data replacement, validation, and rollback") {
+                replaceLiveData(rollback, stagedPrimary, stagedLogs,
+                    File(stage, "app-data/shared-prefs"), File(stage, "attachments/other-files"),
+                    File(stage, "app-data/private-files"))
+            }
         } finally {
             stage.deleteRecursively()
         }
