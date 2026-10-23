@@ -160,6 +160,55 @@ class PortableBackupRepositoryTest {
         }.isFailure)
     }
 
+    /** Chat JSONL remains SillyTavern-importable and visible message edits restore to Room. */
+    @Test
+    fun editableChatJsonlFieldsAreRestored() = runBlocking {
+        primary.openHelper.writableDatabase.execSQL(
+            "INSERT INTO character (" +
+                "id, name, avatar, characterTags, description, creatorNotes, personality, scenario, " +
+                "firstMessages, examplesOfDialogue, postHistoryInstructions, systemPrompt, creator, " +
+                "characterVersion, alternateGreetings, extensionsJson, depthPromptPrompt, " +
+                "depthPromptDepth, depthPromptRole, characterLorebookId, backgroundFileUuid" +
+                ") VALUES (1, 'Chat character', '', '[]', '', '', '', '', '', '', '', '', '', '', " +
+                "'[]', '{}', '', 4, 0, 0, NULL)"
+        )
+        primary.openHelper.writableDatabase.execSQL(
+            "INSERT INTO chat_sessions " +
+                "(id, characterId, createTime, latestTime, lorebookEntrySet, title, userNote, " +
+                "userName, userDescription, creatorNotes, worldInfoStateJson, autoSummaryPaused) " +
+                "VALUES (7, 1, 1000, 1000, '[]', 'Portable chat', '', 'User', '', NULL, '{}', 0)"
+        )
+        primary.openHelper.writableDatabase.execSQL(
+            "INSERT INTO chat_messages (id, sessionId, createTime, source, content, coveredMessageId) " +
+                "VALUES (70, 7, 1000, 'User', 'Original message', NULL)"
+        )
+        val archive = File(root, "editable-chat.zip")
+        val repository = PortableBackupRepository(
+            context, primary, logs, BackupArchiveRepository(context, primary)
+        )
+        repository.exportArchive(Uri.fromFile(archive))
+
+        val unpacked = File(root, "editable-chat").apply { mkdirs() }
+        BackupArchiveFiles.extractArchive(context, Uri.fromFile(archive), unpacked)
+        val chatFile = File(unpacked, "chats/conversation-7.jsonl")
+        val lines = chatFile.readLines().toMutableList()
+        assertTrue(JSONObject(lines.first()).has("chat_metadata"))
+        assertEquals("Original message", JSONObject(lines[1]).getString("message"))
+        val editedMessage = JSONObject(lines[1]).put("message", "Edited message")
+        lines[1] = editedMessage.toString()
+        chatFile.writeText(lines.joinToString("\n", postfix = "\n"))
+        repackDirectory(unpacked, archive)
+
+        repository.restoreArchive(Uri.fromFile(archive))
+        openDatabases()
+        primary.openHelper.readableDatabase.query(
+            "SELECT content FROM chat_messages WHERE id = 70"
+        ).use {
+            assertTrue(it.moveToFirst())
+            assertEquals("Edited message", it.getString(0))
+        }
+    }
+
     /** Removing a character document cascades to sessions that require that character. */
     @Test
     fun deletingCharacterDocumentRemovesDependentSessions() = runBlocking {
