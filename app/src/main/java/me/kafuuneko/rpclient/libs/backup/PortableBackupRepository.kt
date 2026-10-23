@@ -420,9 +420,19 @@ class PortableBackupRepository(
         fun adoptAttachment(file: File, uuid: String, oldHash: String) {
             val fileRow = rowsByUuid[uuid] ?: error("Attachment reference is missing from the file index.")
             val digest = BackupArchiveFiles.sha256(file)
-            val previous = digestByUuid.putIfAbsent(uuid, digest)
-            require(previous == null || previous == digest) {
-                "Conflicting edited copies exist for attachment " + uuid
+            val previous = digestByUuid[uuid]
+            if (previous != null && previous.equals(oldHash, ignoreCase = true) &&
+                !digest.equals(oldHash, ignoreCase = true)
+            ) {
+                digestByUuid[uuid] = digest
+            } else if (previous != null && digest.equals(oldHash, ignoreCase = true)) {
+                // Ignore an unchanged categorized duplicate when the canonical copy was edited.
+                return
+            } else {
+                require(previous == null || previous == digest) {
+                    "Conflicting edited copies exist for attachment " + uuid
+                }
+                digestByUuid[uuid] = digest
             }
             fileRow.put("hash", digest)
             val destination = File(canonical, digest)
@@ -444,15 +454,17 @@ class PortableBackupRepository(
                 rowsByHash[oldHash].orEmpty().forEach { row ->
                     val digest = BackupArchiveFiles.sha256(file)
                     val uuid = row.optString("uuid")
-                    val previous = digestByUuid.putIfAbsent(uuid, digest)
-                    require(previous == null || previous == digest) {
-                        "Conflicting edited copies exist for attachment " + uuid
-                    }
-                    row.put("hash", digest)
-                    val destination = File(canonical, digest)
-                    if (destination.canonicalFile != file.canonicalFile) {
-                        if (!destination.isFile || BackupArchiveFiles.sha256(destination) != digest) {
-                            BackupArchiveFiles.copyFile(file, destination)
+                    if (!digest.equals(oldHash, ignoreCase = true)) {
+                        val previous = digestByUuid.putIfAbsent(uuid, digest)
+                        require(previous == null || previous == digest) {
+                            "Conflicting edited copies exist for attachment " + uuid
+                        }
+                        row.put("hash", digest)
+                        val destination = File(canonical, digest)
+                        if (destination.canonicalFile != file.canonicalFile) {
+                            if (!destination.isFile || BackupArchiveFiles.sha256(destination) != digest) {
+                                BackupArchiveFiles.copyFile(file, destination)
+                            }
                         }
                     }
                 }
