@@ -25,7 +25,7 @@ internal object BackupArchiveFiles {
      * 必需的 schema、偏好目录和附件目录由 restoreArchive/replaceLiveData 单独校验；
      * 因此删除这些关键内容仍会安全失败，而不是覆盖当前数据。
      */
-    fun validateChecksums(root: File, files: JSONObject) {
+    fun validateEditableInventory(root: File, files: JSONObject) {
         val rootPath = root.canonicalPath
         val keys = files.keys()
         while (keys.hasNext()) {
