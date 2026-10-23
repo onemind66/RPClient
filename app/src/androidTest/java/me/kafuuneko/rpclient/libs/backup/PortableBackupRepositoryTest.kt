@@ -425,11 +425,9 @@ class PortableBackupRepositoryTest {
         repackDirectory(unpacked, archive)
 
         repository.restoreArchive(Uri.fromFile(archive))
-        assertEquals(
-            "edited in JSON",
-            context.getSharedPreferences("backup-test-preferences", Context.MODE_PRIVATE)
-                .getString("editableKey", null)
-        )
+        val restoredPreferences = File(root, "shared_prefs/backup-test-preferences.xml")
+        assertTrue(restoredPreferences.isFile)
+        assertTrue(restoredPreferences.readText().contains("edited in JSON"))
     }
 
     /** Repack a staged directory without recalculating export-time manifest digests. */
