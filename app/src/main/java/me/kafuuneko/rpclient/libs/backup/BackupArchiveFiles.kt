@@ -15,28 +15,48 @@ import org.json.JSONObject
 
 /** 归档路径与校验、流式 ZIP 读取及文件替换的公共操作。 */
 internal object BackupArchiveFiles {
-    /** 校验 manifest 中每个文件的大小和摘要，并拒绝索引外的额外文件。 */
+    /**
+     * 验证 ZIP 的文件路径与 manifest 索引格式，但不把导出时的摘要当作恢复前置条件。
+     *
+     * Portable ZIP 是可编辑数据格式：内容修改、删除和新增文件都会使原始 SHA-256 索引
+     * 过期。摘要在此仅是导出时的参考信息，不是签名或真实性证明。路径遍历、重复 ZIP
+     * 条目、解压大小上限以及下游数据库/文档校验仍然强制执行。
+     *
+     * 必需的 schema、偏好目录和附件目录由 restoreArchive/replaceLiveData 单独校验；
+     * 因此删除这些关键内容仍会安全失败，而不是覆盖当前数据。
+     */
     fun validateChecksums(root: File, files: JSONObject) {
-        val listed = mutableSetOf<String>()
+        val rootPath = root.canonicalPath
         val keys = files.keys()
         while (keys.hasNext()) {
             val path = keys.next()
-            listed.add(path)
             require(isSafePath(path)) { "Unsafe manifest path: " + path }
-            val file = File(root, path).canonicalFile
-            require(file.path.startsWith(root.canonicalPath + File.separator) && file.isFile) {
-                "The archive is missing " + path
-            }
             val info = files.getJSONObject(path)
-            require(file.length() == info.getLong("size")) { "File size mismatch: " + path }
-            require(sha256(file).equals(info.getString("sha256"), ignoreCase = true)) {
-                "Checksum mismatch: " + path
+            require(info.optLong("size", -1L) >= 0L) {
+                "Invalid manifest size for " + path
+            }
+            require(info.optString("sha256").matches(Regex("(?i)[0-9a-f]{64}"))) {
+                "Invalid manifest checksum for " + path
+            }
+            // A manifest entry may now be absent because users can delete files from the ZIP.
+            val candidate = File(root, path)
+            if (candidate.exists()) {
+                val file = candidate.canonicalFile
+                require(file.path.startsWith(rootPath + File.separator) && file.isFile) {
+                    "Unsafe or invalid archive file: " + path
+                }
             }
         }
-        // 只排除根 manifest；私有目录允许同名文件且必须参与校验。
-        val actual = root.walkTopDown().filter { it.isFile && it != File(root, "manifest.json") }
-            .map { it.relativeTo(root).invariantSeparatorsPath }.toSet()
-        require(actual == listed) { "The archive contains files not listed in manifest.json." }
+
+        // New files are allowed, but every extracted file must still have a safe canonical path.
+        root.walkTopDown().filter { it.isFile && it != File(root, "manifest.json") }.forEach { file ->
+            val path = file.relativeTo(root).invariantSeparatorsPath
+            require(isSafePath(path)) { "Unsafe archive path: " + path }
+            val canonical = file.canonicalFile
+            require(canonical.path.startsWith(rootPath + File.separator)) {
+                "Unsafe archive path: " + path
+            }
+        }
     }
 
     /** 流式解压到独立目录，拒绝越界路径、重复条目和超过恢复限额的内容。 */
