@@ -105,13 +105,15 @@ internal object BackupDatabaseCodec {
                 rows.objects().forEach { target.add(it) }
             }
         }
-        // 业务文档解析失败必须终止恢复，不能跳过记录后替换当前数据。
+        // Only documented business-data locations may contribute database rows. In
+        // particular, schema/settings/private JSON and arbitrary added files are never executed
+        // as row payloads merely because they contain a field named _tableRows.
         root.walkTopDown().filter { it.isFile && (it.extension == "json" || it.extension == "jsonl") }
             .forEach { file ->
                 val path = file.relativeTo(root).invariantSeparatorsPath
+                if (!isPortableDocumentPath(path)) return@forEach
                 if (includePath != null && path != includePath) return@forEach
                 if (excludePath != null && path == excludePath) return@forEach
-                if (path.startsWith("app-data/private-files/")) return@forEach
                 if (file.extension == "json") {
                     collect(JSONObject(file.readText(Charsets.UTF_8)))
                 } else {
@@ -121,6 +123,26 @@ internal object BackupDatabaseCodec {
                 }
             }
         return result.mapValues { it.value.toList() }
+    }
+
+    /**
+     * Allow rows only from known portable-document roots. Filenames remain flexible so users can
+     * add, rename, or remove individual documents without editing the manifest.
+     */
+    private fun isPortableDocumentPath(path: String): Boolean {
+        val patterns = listOf(
+            Regex("""characters/[^/]+\\.json"""),
+            Regex("""stories/[^/]+\\.json"""),
+            Regex("""chats/[^/]+\\.jsonl"""),
+            Regex("""group-chats/[^/]+\\.jsonl"""),
+            Regex("""worldbooks/[^/]+\\.json"""),
+            Regex("""regex/[^/]+\\.json"""),
+            Regex("""regex/character-scripts/[^/]+\\.json"""),
+            Regex("""providers/[^/]+\\.json"""),
+            Regex("""app-data/(?:token-usage|message-images|files-index)\\.json"""),
+            Regex("""app-data/(?:other-tables|request-logs)\\.jsonl""")
+        )
+        return patterns.any { it.matches(path) }
     }
 
     /** 根据旧版 schema 将安全文件名映射回原表名。 */
