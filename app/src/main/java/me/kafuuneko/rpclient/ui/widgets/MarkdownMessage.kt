@@ -227,7 +227,6 @@ private fun MarkdownInlineText(
     modifier: Modifier = Modifier,
 ) {
     val highlightBackground = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
-    val highlightForeground = MaterialTheme.colorScheme.primary
     val text = remember(
         content,
         color,
@@ -236,7 +235,6 @@ private fun MarkdownInlineText(
         strongColor,
         highlightedRanges,
         highlightBackground,
-        highlightForeground,
     ) {
         val rendered = buildAnnotatedString {
             appendMarkdownInline(
@@ -248,7 +246,7 @@ private fun MarkdownInlineText(
             )
         }
         // 高亮作用于渲染后的可见范围，不能直接套用 Markdown 原文下标。
-        rendered.withHighlightRanges(highlightedRanges, highlightForeground, highlightBackground)
+        rendered.withHighlightRanges(highlightedRanges, highlightBackground)
     }
     Text(
         modifier = modifier,
@@ -267,12 +265,11 @@ private fun MarkdownCodeBlock(
     highlightedRanges: List<IntRange> = emptyList(),
 ) {
     val highlightBackground = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
-    val highlightForeground = MaterialTheme.colorScheme.primary
     val highlightedCode =
-        remember(content, highlightedRanges, highlightBackground, highlightForeground) {
+        remember(content, highlightedRanges, highlightBackground) {
             // 代码块不解析行内语法，空内容仍保留占位高度。
             AnnotatedString(content.ifBlank { " " })
-                .withHighlightRanges(highlightedRanges, highlightForeground, highlightBackground)
+                .withHighlightRanges(highlightedRanges, highlightBackground)
         }
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -308,7 +305,6 @@ private fun MarkdownCodeBlock(
 /** 限制高亮范围到可见文本长度，正文与代码块共用相同样式。 */
 private fun AnnotatedString.withHighlightRanges(
     ranges: List<IntRange>,
-    foreground: Color,
     background: Color,
 ): AnnotatedString {
     if (ranges.isEmpty()) return this
@@ -319,11 +315,7 @@ private fun AnnotatedString.withHighlightRanges(
             val start = range.first.coerceIn(minimumValue = 0, maximumValue = length)
             val end = (range.last + 1).coerceIn(start, length)
             if (start < end) addStyle(
-                style = SpanStyle(
-                    background = background,
-                    color = foreground,
-                    fontWeight = FontWeight.Medium,
-                ),
+                style = SpanStyle(background = background),
                 start = start,
                 end = end,
             )
